@@ -1854,3 +1854,34 @@ The fix is the one already in the tree for `v_fma_mix*`: recognise the literal f
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 (literal in src1 of `v_dot4`), 4 (SMEM register file) |
+
+---
+
+## 55. The literal fix cannot live in `mix_literal`: the caller hands it eight bytes
+
+Tried the obvious place first — a branch in `mix_literal` for a dot product whose src1 field is `0xff`:
+
+```python
+if op.startswith(("v_dot2_", "v_dot4_", "v_dot8_")) and len(raw) == 12 and len(printed) == 8 …
+```
+
+It never runs, and the reason is structural: the re-anchoring loop calls it as
+
+```python
+literal = mix_literal(blob[at:at + len(enc)], enc, base_op(op))
+```
+
+with `enc` being what llvm-mc printed — **eight bytes**. `raw` is therefore eight bytes too, and a branch that
+needs twelve can never be reached. The corpus count is unchanged (23 / 29) and the branch was reverted, so
+nothing dead is left in the tree.
+
+The conclusion is that the change belongs one layer out: the *disassembler* must decide that this word is a
+twelve-byte instruction (because its src1 field is `0xff`) and print twelve bytes, after which the existing
+`mix_literal`/`restore_mix_literal` pair can carry the value as it does for `v_fma_mix`.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (the fix now has a known home: `tools/shader_disasm.py`, twelve-byte form), 4 (SMEM) |
