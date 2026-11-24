@@ -902,3 +902,33 @@ decode the VOP3P word directly (vdst, op, src0/1/2, the `op_sel`/`neg_*` bits), 
 with its modifiers and the blob's own bytes as the encoding, and let the translator parse it. Nothing is
 dropped, so the shader keeps its semantics; the alternative — clearing the modifier bits so llvm-mc
 accepts the word — would silently change the dot product's operand halves and is not worth it.
+
+---
+
+## 30. First decoder fix: one more FSPX program translates
+
+`tools/shader_disasm.py` now has `vop3p_patch`, next to `vcc_tuple_patch`: at a word llvm-mc reports as an
+invalid encoding, a VOP3P opcode with `op_sel` bits set is decoded by clearing those two bits so the
+instruction can be printed, and the modifier is put back on the line afterwards together with the blob's own
+bytes. Measured effect on the FidelityFX corpus (same translator, fresh unpack):
+
+| | before | after |
+|---|---|---|
+| translated | 18 / 29 | **19 / 29** |
+| programs with no undecodable words | 18 | 19 |
+
+So the class was real and the fix works, but it is one class out of several: `_03` still carries eight
+undecodable words that are not VOP3P `op_sel`.
+
+The translator suite was run for the change: `455 files, 6007 tests, 3 files failed in 541 s`
+(`test_image_atomics_guard`, `test_image_cube_store_glc`, `test_image_store_d16`). Those three exercise image
+atomic and store rules in `tools/rdna2spirv.py`, which this change does not touch, and that file already carries
+uncommitted edits from the parallel session — the failures are theirs, not the decoder's, but they are
+unresolved and are recorded here rather than claimed clean.
+
+## Next
+
+The remaining classes, in the order they show up in `_03`: words whose top byte is not `0xcc` (`0x251ac9f8`,
+`0x1a4a4a2c`, `0x04.89.03.23`...), which look like VOP3/VOP1 with a modifier llvm-mc also refuses. The same
+method applies: read the encoding, prove the mnemonic by assembling the unmodified form, then decode the
+modifier bits explicitly instead of dropping them.
