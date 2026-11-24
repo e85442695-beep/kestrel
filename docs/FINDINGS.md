@@ -66,3 +66,53 @@ XCRDAPI.dll DStorageGetFactory
   the older SDK unless `WindowsSDKVersion` is set before the build.
 - The shader stage is CPU-bound: 26,503 translations on 6 shards, roughly 30 minutes on a
   12-thread machine once the fast shaders are past.
+
+---
+
+## 5. Forge branch: the game runs, frames are black
+
+`forge/adopt/menu-stack` (worktree `D:\Kestrel-upstream`, built into `D:\Kestrel-out`)
+changes everything below the loader. With it:
+
+```
+4 modules mapped, 0 unimplemented imports
+running game_scarlett_master.exe
+[rt] xbox_present: PresentX call 256 (1 planes) returned 0x00000000, 256 presented so far
+```
+
+Measured over one four-minute run:
+
+- D3D12 device created, 92,071 recorded D3D12 calls in the trace
+- command lists created, closed, reset, executed in a loop
+- Xbox-only slots routed: 73 (CreateCommandListX), 78 (SetFrameIntervalX),
+  79 (ScheduleFrameEventX), 133 (CreatePlacedResourceX), fence slot 8, allocator slot 8
+- a window titled **Americas**, 1940x1100, appears about ten seconds in
+- 256 successful `PresentX` calls
+
+The frame is uniformly black. This is the known "black frames" work item: the forge has
+`forge/fix/black-frames`, `forge/fix/black-frames-2` and `forge/fix/red-frames*` branches
+for exactly this.
+
+Required environment for a run that survives past the first asserts:
+
+```
+LEONIDA_D3D12=vulkan
+LEONIDA_SKIP_INT3=1        (only takes effect together with --trace)
+gta6rt.exe --run <exe> --game-dir <package> --trace trace.json
+```
+
+Without `--trace` the first `int3` ends the process with `0x80000003`; without
+`LEONIDA_D3D12=vulkan` the device path is dead.
+
+### Where this leaves the two earlier findings
+
+Both were upstream's problems, and upstream solved them: the branch serves `XErrorReport`
+and handles the title's slot-0 TLS. Our own patches were superseded, which is the right
+outcome.
+
+### Next
+
+1. Merge or build `forge/fix/black-frames-2` on top of this and compare.
+2. `LEONIDA_PROBE=all` splits a black frame into "the shaders" versus "everything else".
+3. `LEONIDA_DEBUG_CLEAR=1` turns all-zero clears magenta: if the window stays black with
+   that on, the present path is not reaching the swapchain at all.
