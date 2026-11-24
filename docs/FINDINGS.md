@@ -1249,3 +1249,44 @@ Read the struct that the failing invocation is given, not the one at the trap fr
 entry (`0x142215ea0`), which runs for every invocation, and log `[rsi]` and `[rsi+8]` there. The first
 invocation whose `[rsi]` is not inside the image is the one that fails, and its caller says which
 subsystem handed it over.
+
+---
+
+## 41. The fatal helper's shape, and why the breakpoint never fired
+
+The block that traps is small and self-contained:
+
+```
+142215c27  mov  %rax, [0x1471b6348]   ; a global "report" callback, null when unset
+142215c2e  test %rax, %rax
+142215c31  je   142215c35
+142215c33  call *%rax                  ; report, if a handler was registered
+142215c35  movl $0x0, 0x0              ; and then write to address zero
+142215c40  int3
+```
+
+A breakpoint on the helper entry `0x142215ea0` never fires before the trap, so the return address
+`0x142215eca` seen on the stack is **stale data, not a live frame**: the game's frames do not unwind in
+this build, and the two-frame stack is all the unwinder can show.
+
+That also means the callback pointer read at the trap (`[rsi] = 0x6e02d4663f`) belongs to whatever
+function was running, not to the helper — it is not evidence of a truncated callback.
+
+## What the evidence supports now
+
+- the trap is the title's own "unrecoverable" helper, called from somewhere that leaves no unwindable frame,
+- the layer is not called between the last trace event (physical-page allocation) and the trap,
+- so the failure is decided inside the title, on a thread whose stack the unwinder cannot walk.
+
+Getting further needs a different tool than breakpoints on return addresses: either registering the
+title's `.pdata` for the threads the layer did not create (so the unwinder works), or hooking the report
+callback (`0x1471b6348`) so the helper's own message is captured before it traps. The second is small and
+would name the failing subsystem directly.
+
+## Where the goal stands after this round
+
+| | |
+|---|---|
+| FSPX translated | 21 / 29, none of the missing ones requested by the runtime |
+| fatal path | still there, cause not yet named |
+| frame | none |
