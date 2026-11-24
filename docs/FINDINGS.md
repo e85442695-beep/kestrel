@@ -1642,3 +1642,46 @@ Two readings, both testable later and neither worth a guess now:
 | FSPX | 23 / 29 |
 | open | 2 (`v_dot4` literal), 4 (this SMEM instruction) |
 | corpus knowledge | SDATA/4 and SBASE/2 measured for `s_buffer_load_dwordx16` on gfx1030 |
+
+---
+
+## 50. Corrected SMEM field widths — and the context that explains why the values matter
+
+Two measurements fix the mapping from section 49, which had the destination field wrong:
+
+| operands | word0 | SDATA `[12:6]` | SBASE `[5:0]?2` |
+|---|---|---|---|
+| `s[0:15], s[4:7]` | 0xf4300002 | 0 | 4 |
+| `s[16:31], s[4:7]` | 0xf4300402 | 16 | 4 |
+| `s[64:79], s[64:67]` | 0xf4301020 | 64 | 64 |
+| `s[84:99], s[100:103]` | 0xf4301532 | 84 | 100 |
+
+So **SDATA is seven bits at [12:6], stored raw**; it is not `byte1` and not divided by four. SBASE stays
+`[5:0] ? 2`.
+
+The blob's word `0xf4301734` therefore reads SDATA = 92 and SBASE = 104 — the same numbers as before, but now
+from the correct fields, so the conclusion is no longer an artefact of a bad mapping. A 16-dword
+destination at s92 runs past s102, and no base at s104 exists.
+
+The bytes around it rule out the other explanations too. The word sits inside a run of ordinary instructions
+and is followed by `15 60 60 3a 15 2e 2e 3a`:
+
+```
+… 6164121a 6204121a 6310121a | 341730f4 90a101fa | 1560603a 152e2e3a …
+```
+
+so it is not a literal or a misaligned fragment. The second word `0xfa01a190` is a well-formed SMEM tail
+(signature `0x3E` in its top bits, 21-bit offset `0x1a190`), which pins the instruction's 8-byte extent and
+confirms the first word is a SMEM word.
+
+What remains is the only thing left: **the console's gfx1013 numbers SMEM opcodes differently from gfx1030**,
+so opcode 12 there is not `s_buffer_load_dwordx16` and the field layout we measured on gfx1030 does not apply.
+That needs a gfx1013 opcode table or a hardware probe, neither of which this checkout has.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (`v_dot4` literal form), 4 (SMEM, needs gfx1013 tables) |
+| corrected | SDATA is `[12:6]`, raw 7 bits — sections 48–49 had it as `byte1`/4 |
