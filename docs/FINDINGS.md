@@ -564,3 +564,28 @@ Two ways out, both already present in the runtime:
 
 The second keeps every image as it is; the first is cheaper and simpler but changes how the image is
 created. The next version takes the second, since a title-placed texture may also be a render target.
+
+---
+
+## 17. The wait is gone; the batch now names an unregistered resource
+
+`patches/placed-texture-upload-pinned.patch` hands the staging buffer to the queue's own pin mechanism
+(`VulkanQueue::execute(lists, pin)`), which keeps it alive until the batch has run and frees it then.
+No `idle()`, no wait in the submit path.
+
+The run gets further — the upload is reached — and then the replay refuses:
+
+```
+[rt] d3d12: unknown resource: list 0 command 18446744073709551615 (kind 0) names id 0x0 (never registered)
+```
+
+The copy the upload builds names the image's resource id, and at replay time that id is not in the
+context's registry. `create_committed`, which builds the fallback image for a title-placed texture,
+does not register an image binding the way `attach_device` does for the ordinary paths, so the
+replay has nothing to resolve the destination to.
+
+That is the next thing to fix, and it is small: register the image's binding when the fallback
+texture is created (or resolve the destination through the resource pointer rather than the id), then
+the upload runs without any wait.
+
+The flag stays off by default until then, so the runtime keeps its two thousand presents.
