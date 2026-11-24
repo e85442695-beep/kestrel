@@ -532,3 +532,35 @@ The flag is off by default so the runtime keeps its speed. The next version has 
 3. upload on the barrier the title uses to say its writes are done, not on the next submission.
 
 The data is there and the path works; what is missing is batching.
+
+---
+
+## 16. Batched, and the queue wait was never the per-copy cost
+
+`patches/placed-texture-upload-batched.patch` puts every subresource of a texture into one host-visible
+buffer and one command list, and waits once:
+
+```
+title-placed texture 3840x2160 fmt 65: uploaded 8100 KiB in 1 copies, 104.48 ms
+title-placed texture 2048x2048 fmt 87: uploaded 16384 KiB in 1 copies, 243.38 ms
+```
+
+The copy count collapsed from one per subresource to one per texture and the time did not move. So the
+cost was never the copies; it is the round trip: submit on the staging queue, then `idle()`, inside the
+path that is about to submit the title's own work. Sixteen megabytes of memcpy is a few milliseconds;
+the other two hundred are spent waiting.
+
+And it is fatal to the run: with the upload enabled the process reaches **one** present in a hundred
+and ten seconds and then the title's own watchdog ends it. The synchronous upload has to go.
+
+Two ways out, both already present in the runtime:
+
+1. **`VK_EXT_host_image_copy`** — the runtime already uses it for host-transfer images
+   (`host_initialize`, `host_copy`). A CPU-side copy into the image needs no queue, no submission and
+   no wait. It requires the image to be created with the host-transfer usage, which a title-placed
+   texture is not today.
+2. **A real fence** — keep the staging buffer alive, record the copy in the submission that uses the
+   texture, and free the buffer when the queue signals. No `idle()` at all.
+
+The second keeps every image as it is; the first is cheaper and simpler but changes how the image is
+created. The next version takes the second, since a title-placed texture may also be a render target.
