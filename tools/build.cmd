@@ -4,7 +4,7 @@ rem  Kestrel - build the runtime against your own copy of the game
 rem
 rem  usage:  tools\build.cmd "D:\path\to\package" [out] [work]
 rem ================================================================
-setlocal EnableDelayedExpansion
+setlocal DisableDelayedExpansion
 
 set "GAME=%~1"
 if "%GAME%"=="" (
@@ -38,12 +38,36 @@ if exist "C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0" (
   set "WindowsSDKVersion=10.0.26100.0\"
 )
 
-set "PY=%~dp0..\..\..\python\python.exe"
-where python >nul 2>&1 && set "PY=python"
+set "SOURCE=%KESTREL_SOURCE%"
+if not defined SOURCE set "SOURCE=%~dp0.."
+if not defined KESTREL_SOURCE if not exist "%SOURCE%\make_game.py" set "SOURCE=%~dp0..\..\Kestrel-upstream"
+if not exist "%SOURCE%\make_game.py" (
+  echo [!] make_game.py not found. Set KESTREL_SOURCE to the Leonida runtime checkout.
+  exit /b 1
+)
 
-cd /d "%~dp0.."
+if defined KESTREL_PYTHON (
+  if not exist "%KESTREL_PYTHON%" (
+    echo [!] KESTREL_PYTHON does not point to an existing python.exe.
+    exit /b 1
+  )
+  set "PY=%KESTREL_PYTHON%"
+) else (
+  where python >nul 2>&1 || (
+    echo [!] Python not found. Set KESTREL_PYTHON to the path of python.exe.
+    exit /b 1
+  )
+  set "PY=python"
+)
+
+for %%I in ("%GAME%") do set "GAME=%%~fI"
+for %%I in ("%OUT%") do set "OUT=%%~fI"
+for %%I in ("%WORK%") do set "WORK=%%~fI"
+pushd "%SOURCE%" || exit /b 1
 echo [*] game  %GAME%
 echo [*] out   %OUT%
 echo [*] work  %WORK%
-%PY% -I make_game.py --stages check,runtime --game "%GAME%" --out "%OUT%" --work "%WORK%" --no-tui
-exit /b %ERRORLEVEL%
+"%PY%" -I make_game.py --stages check,runtime --game "%GAME%" --out "%OUT%" --work "%WORK%" --no-tui
+set "RESULT=%ERRORLEVEL%"
+popd
+exit /b %RESULT%

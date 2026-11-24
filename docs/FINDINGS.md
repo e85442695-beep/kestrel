@@ -116,3 +116,12 @@ outcome.
 2. `LEONIDA_PROBE=all` splits a black frame into "the shaders" versus "everything else".
 3. `LEONIDA_DEBUG_CLEAR=1` turns all-zero clears magenta: if the window stays black with
    that on, the present path is not reaching the swapchain at all.
+
+## Build wrapper
+
+Kestrel's wrapper previously looked for `make_game.py` in the Kestrel repository.
+The entry point lives in the Leonida runtime checkout. `tools/build.cmd` now
+finds the sibling `Kestrel-upstream` checkout or uses an explicit `KESTREL_SOURCE`.
+Set `KESTREL_PYTHON` to the full interpreter path when Python 3.12 or newer
+is outside PATH. Game, output and work paths are resolved before the wrapper
+changes directories.
