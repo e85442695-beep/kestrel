@@ -1020,3 +1020,36 @@ byte, and they have not been identified yet either.
 
 The translator suite state from section 30 still stands: 3 files fail in `rdna2spirv.py` image rules,
 pre-existing and unrelated to the decoder changes.
+
+---
+
+## 34. The last four programs turn on a single word
+
+With the `op_sel` class closed, the failing set is eight programs in two groups.
+
+**Group A (4 programs: `_03`, `_04`, `_05`, `_18`) — zero undecodable words.** Their disassembly is
+clean; what refuses them is the translator's encoding check on `v_dot4_i32_i8`, the second-word modifier
+bit from section 33. Nothing left to decode here, only that bit to identify.
+
+**Group B (4 programs: `_06`, `_08`, `_09`, `_28`) — exactly one undecodable word each**, and by the
+debug counter at the same point in the scan:
+
+```
+[disasm] still invalid: ['0x62f0']
+```
+
+The word itself, from the message window of `_06` (`<stdin>:792`, caret at byte 16):
+
+```
+... 0x34 0x17 0x30 0xf4 ...
+```
+
+One word class, four programs — the same shape as the `op_sel` finding, and just as worth decoding.
+
+Getting at it needs care: `code_range` returns `(None, end, 'scan')` for these four, so the listing
+comes from the tool's start-scan rather than from the header, and the offset `0x62f0` is relative to
+that scanned start. A decoder for the word has to be proved against the scan's own framing, not against
+a hand-made slice: the first attempt here read header bytes as code because the slice started at zero.
+
+`LEONIDA_DISASM_DEBUG=1` now prints both the recovered VOP3P words and the offsets left invalid, which
+is what produced these numbers; it is off unless the variable is set.
