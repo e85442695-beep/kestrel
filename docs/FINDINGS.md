@@ -257,3 +257,60 @@ presents. Later logs reported incompatible depth/stencil views and an
 unsupported texture staging copy. The client capture sampled only black.
 There were zero missing shader messages and zero slot 67 failures in
 this run. The test process was stopped after the capture.
+
+---
+
+## 6. Depth/stencil views and the swizzle answer
+
+Two changes this round, both saved under `patches/`.
+
+### Plain typed views of a depth-stencil plane
+
+The runtime refused three view casts the console allows:
+
+```
+depth view refused:   resource 19 (R32G8X24_TYPELESS)   requested 41 (R32_FLOAT)
+depth view refused:   resource 118 (D16_UNORM_S8_UINT)  requested 56 (R16_UNORM)
+stencil view refused: resource 118 (D16_UNORM_S8_UINT)  requested 62 (R8_UINT)
+```
+
+The console lets a depth plane be read through the plain typed format of the same
+width, and the stencil plane as a plain 8-bit unsigned. Vulkan expresses the same cast
+through its depth-stencil compatibility family, and the runtime already builds the view
+on the resource's own VkFormat, so only the guest-facing T# changes.
+
+`patches/depth-stencil-plain-views.patch` adds those pairs. The rebuild produces a
+runtime with those three refusals gone.
+
+### XGSuggestSwizzleMode answered linear
+
+`menu-stack` answered `E_NOTIMPL` to `XGSuggestSwizzleMode` and `XGCreateTextureComputer`,
+so the title described every texture through a layout that was never filled in. The
+`forge/adopt/leonardo` branch answers linear instead, which is the PC-correct answer:
+there is no console layout to describe.
+
+`patches/linear-swizzle-answer.patch` ports that behaviour to `menu-stack` — mode 0,
+`S_OK` from the computer stand-in, and `S_OK` from its methods.
+
+The result is not a picture yet. With the answer in place the title takes the texture
+path for real and then stops at a null read in guest code:
+
+```
+00000001`455aa6f0  c4a2ebf70cc1  shrx rcx,qword ptr [rcx+r8*8],rdx   ds:00000000`00000000
+```
+
+That is the same stop the Leonardo branch reaches, right after
+`IDStorageFactoryX2::CreateQueue1`. Both branches now die in the same place, which makes
+the DirectStorage queue and its status array the next object to finish: the interfaces
+are served, the queue behind them is not.
+
+### State of the two branches after this round
+
+| Branch | Presents | Stops at |
+|---|---|---|
+| `menu-stack` as it was | 256 | black frames, swizzle never answered |
+| `menu-stack` + linear answer | 0 | null read after `CreateQueue1` |
+| `leonardo` + texture shadow | 32 | the same null read |
+
+Reverting the swizzle patch brings the 256 presents back; the frame stays black either
+way, so the patch is kept as the honest next step rather than a regression.
