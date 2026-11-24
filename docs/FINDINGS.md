@@ -589,3 +589,40 @@ texture is created (or resolve the destination through the resource pointer rath
 the upload runs without any wait.
 
 The flag stays off by default until then, so the runtime keeps its two thousand presents.
+
+---
+
+## 18. The ids were never the problem; the second queue on one VkQueue is
+
+Logging the ids the upload names:
+
+```
+[rt] d3d12: texture upload ids: image 0x1906f45c990, staging 0x76f27fc990, 1 copies
+```
+
+Both are real. The "unknown resource ... id 0x0" line does not come from the upload at all.
+
+What the upload does do is stall the whole run:
+
+```
+[rt] host stall: a guest Sleep(1) returned 4399 ms late, held while the layer did host-only work (logged once)
+```
+
+Four and a half seconds, and no present at all in forty seconds. The cause is visible in the code that
+builds the staging queue: it is created on `device_.info.queue` — **the same VkQueue the title's own
+submissions use** — and the upload submits on it from inside `set_before_execute`, which runs in the
+middle of the title's submission path. Two `VulkanQueue` objects over one VkQueue, one submitting
+while the other is preparing, serialise against each other.
+
+So the upload must not use a queue of its own. The two honest options remain:
+
+1. **`VK_EXT_host_image_copy`** — a CPU copy with no queue, no submission and no interaction with the
+   title's queue at all. The runtime already uses it for host-transfer images. It needs the image to
+   be created with the host-transfer usage and, on some drivers, optimal-tiling support.
+2. **Inject the copies into the submission that needs them** — the same command buffer the title's
+   work goes into, ordered before the first use. No second queue at all.
+
+The second keeps every image as it is and is the smaller change from here: the copies are already
+built as one `CommandList`; what has to change is who submits it.
+
+The flag stays off, the runtime keeps its 1024 presents in forty-five seconds.
