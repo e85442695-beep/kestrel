@@ -1485,3 +1485,46 @@ buffer. No matching live texture was found for the R8_UNORM request either.
 The game stopped on a null read at game-relative offset `0x55aa6f0`, before
 its first present. Slot 70 lookup and the title's fatal path are both still
 open for this run.
+
+---
+
+## 46. Two rules close half of Group A: 21 > 23 of 29
+
+Both changes are in `tools/rdna2spirv.py`, each with the AMD-emulator citation from section 44:
+
+1. **`same_encoding` tolerates bit 60 on the three-source integer dot opcodes.** llvm-mc re-encodes the third
+   source's half-select with its default, so its printed bytes differ from the blob's in that one bit; the
+   opcode ignores the field, so the difference does not change the instruction.
+2. **The `v_dot4` handler no longer refuses a set `selhi[2]`.** S2 is the plain 32-bit addend; the third
+   source's half-select does not apply, and AMD's model reads only `op_sel`, `op_sel_hi` (sources 0 and 1) and
+   `clamp` for this opcode.
+
+Measured over the FidelityFX corpus:
+
+| | before | after |
+|---|---|---|
+| translated | 21 / 29 | **23 / 29** |
+| `v_dot4_i32_i8` encoding refusals | 4 | 2 |
+
+The work folder's index is regenerated at 23 programs (`D:\Leonida-work\shaders\spirv\fspx`), so the runtime
+now has two more FSR programs to build.
+
+## What the remaining two are
+
+```
+v_dot4_i32_i8 at 0x2e54: the blob holds 244016cc2bff6519, LLVM printed 245016cc2f3d910c
+v_dot4_i32_i8 at 0x3114: the blob holds 244016cc1c498819, LLVM printed 245016cc1403910c
+```
+
+These differ in **both** words — `byte1 0x40` against `0x50` (the `op_sel` bit from section 31) and in the
+second word, where blob `…2bff6519` carries what llvm-mc printed as `…2f3d910c` (an inline constant where the
+blob has a register, or the reverse). That is the literal-source case: the operand form the assembler chose
+is not the one the blob encodes, so the printed text names the wrong kind of source. Fixing it means
+decoding those two words the way the `op_sel` class was decoded, rather than tolerating them.
+
+## Corpus
+
+| | |
+|---|---|
+| FSPX translated | 23 / 29 |
+| open classes | literal/mixed-encoding `v_dot4` (2), the unidentified word class (4) |
