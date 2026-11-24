@@ -1528,3 +1528,39 @@ decoding those two words the way the `op_sel` class was decoded, rather than tol
 |---|---|
 | FSPX translated | 23 / 29 |
 | open classes | literal/mixed-encoding `v_dot4` (2), the unidentified word class (4) |
+
+---
+
+## 47. The last word class is SMEM, not VOP3P: `s_buffer_load_dwordx16` with operands llvm-mc refuses
+
+The debug line now prints the bytes at the offsets left invalid, so the class is measured rather than
+inferred:
+
+```
+[disasm] still invalid: ['0x62f0'] bytes 62f0:341730f490a101fa
+[disasm] still invalid: ['0x3298'] bytes 3298:341730f4c00c01fa
+[disasm] still invalid: ['0x32a0'] bytes 32a0:341730f440b700fa
+[disasm] still invalid: ['0x1494'] bytes 1494:341730f4c06a00fa
+```
+
+Four programs, the same first word `0xf4301734`, different second words. Its top bits are `0x3D`
+(`0b111101`), which is the SMEM primary encoding — not VOP3P at all, which is why the whole VOP3P line of
+work did not touch this group.
+
+Assembling the same opcode with plain operands pins the mnemonic exactly:
+
+```
+s_buffer_load_dwordx16 s[0:15], s[4:7], 0x0  ->  0x02,0x00,0x30,0xf4, 0x00,0x00,0x00,0xfa
+target                                        ->  0x34,0x17,0x30,0xf4, …
+```
+
+Byte 2 matches (`0x30`), so the opcode is `s_buffer_load_dwordx16`; the two low bytes carry the SDATA and
+SBASE fields, which differ because the blob names different registers. llvm-mc **can** assemble this
+instruction, so it is refusing the blob's particular operands — a field constraint (alignment of the
+destination range or of the base), not a missing opcode.
+
+## Next
+
+Decode SDATA/SBASE from `0xf4301734` and print the instruction directly, the way the VOP3P class is printed
+now: the mnemonic and the register ranges are all in those bytes, and the second word carries the offset
+and soffset. Four programs turn on this one instruction.
