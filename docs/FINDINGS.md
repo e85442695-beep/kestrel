@@ -1782,3 +1782,39 @@ the fix: if it does, the disassembler should accept these two fields as-is and p
 | FSPX | 23 / 29 |
 | open | 2 (`v_dot4` literal), 4 (SMEM naming SGPRs above the PC's file) |
 | corpus fact | 1070 opcode-12 words, 848 legal on gfx1030, 222 not |
+
+---
+
+## 53. A literal source makes the dot instruction twelve bytes — and the blob has none
+
+Measured on `v_dot4_i32_i8`:
+
+```
+v_dot4_i32_i8 v4, s0, v0, 0x12345   ->  24 40 16 cc 00 00 fe 1b | 45 23 01 00     (12 bytes)
+v_dot4_i32_i8 v4, s0, v0, 2.0       ->  24 40 16 cc 00 00 d2 1b                   (8 bytes)
+```
+
+A literal operand appends its own dword, so the instruction is twelve bytes; an inline constant
+(`2.0`) needs none. That was the open question for the two remaining programs, and it is answered
+negatively for the blob:
+
+```
+blob:    24 40 16 cc 2b ff 65 19
+printed: 24 50 16 cc 2f 3d 91 0c
+```
+
+Neither word carries the `0xfe`/`0xff` marker in a source field that a literal would show, so the
+instruction is eight bytes and llvm-mc consumed the right number. The difference is **inside the
+operand encoding**: `byte0` `0x2b` against `0x2f` (one bit), `byte1` `0x40` against `0x50` (the
+`op_sel` bit from section 31), and a completely different source word.
+
+So the two programs fail on how llvm-mc re-encodes the sources, not on length: it chose a different
+register or inline-constant form than the blob's. Decoding those two words means reading the source
+fields directly — the same treatment `op_sel` got — and printing the instruction ourselves.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (this class, now reduced to source-field encoding), 4 (SMEM register file) |
