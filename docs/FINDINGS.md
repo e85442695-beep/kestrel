@@ -205,3 +205,19 @@ bit when the destination is `VCC`. The patch in
 the bit through the existing EXEC setter. A synthetic test starts with
 every lane disabled, checks that each scalar bit enables the correct pair
 of lanes, and checks that both possible SCC values are preserved.
+
+## Leonardo fallback window
+
+The local build of Leonida's `forge/adopt/leonardo` at `a08e887` mapped
+four modules with zero unimplemented imports. Its fallback PresentX
+window stayed hidden. The patch in
+`patches/leonardo-show-present-window.patch` adapts Leonida forge commit
+`9dbc9da` by enx and shows the fallback window when the runtime owns it.
+Apply this patch to the Leonardo checkout. The rebuilt runtime created a
+visible window titled Leonida with the same launcher and shader cache.
+
+With the EXEC patch applied, the translated compute library grew from
+1,716 to 1,725 modules that passed `spirv-val`. The Leonardo runtime loaded
+all 1,725, alongside the other shader indexes. It still logged missing
+compute shaders in slot 67. Xbox device slot 81 also returned
+`E_NOTIMPL`. Its call contract has yet to be identified.

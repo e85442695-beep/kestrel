@@ -1,0 +1,12 @@
+diff --git a/runtime/shims/d3d12_xs_device.cpp b/runtime/shims/d3d12_xs_device.cpp
+index 44351ec..f6ed3e9 100644
+--- a/runtime/shims/d3d12_xs_device.cpp
++++ b/runtime/shims/d3d12_xs_device.cpp
+@@ -1545,6 +1545,7 @@ PresentState* present_state_for(DeviceProxy* device) {
+         state->owns_window = state->window != nullptr;
+     }
+     if (!state->window) return state;
++    if (state->owns_window) ShowWindow(state->window, SW_SHOWNOACTIVATE);
+     auto presenter = rt::d3d12::create_window_presenter(device->real, state->window);
+     if (!presenter) {
+         std::fprintf(stderr, "[rt] d3d12_xs: no window presenter on this device; PresentX is a no-op\n");
