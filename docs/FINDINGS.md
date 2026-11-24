@@ -13,7 +13,7 @@ Fixed in `runtime/shims/xgameruntime.cpp`: the named export now exists, with the
 as the `IXErrorImpl` slot 3 (`HRESULT XErrorReport(HRESULT, const char*)`, extra arguments
 ignored).
 
-## 2. Static TLS read through TEB slot 0 (open)
+## 2. Static TLS read through TEB slot 0 (resolved in the forge runtime)
 
 The crash after the fix is deterministic and small:
 
@@ -43,7 +43,7 @@ The reason neither works is that the host is re-entered on every shim call. The 
 switch at the call boundary, not the thread boundary, or the host must be built without a
 static TLS directory so the title inherits slot 0 naturally.
 
-## 3. Unimplemented imports (20)
+## 3. Unimplemented imports in the first runtime (20)
 
 All audio, plus one storage factory. They return success without doing anything, which is
 worse than failing loudly:
@@ -104,18 +104,40 @@ gta6rt.exe --run <exe> --game-dir <package> --trace trace.json
 Without `--trace` the first `int3` ends the process with `0x80000003`; without
 `LEONIDA_D3D12=vulkan` the device path is dead.
 
-### Where this leaves the two earlier findings
+### Reproduction on GTX 1650, driver 591.86
 
-Both were upstream's problems, and upstream solved them: the branch serves `XErrorReport`
-and handles the title's slot-0 TLS. Our own patches were superseded, which is the right
-outcome.
+The `menu-stack` runtime at Leonida revision `7d0af7c` mapped four modules
+with zero unimplemented imports. At process initialization it loads a TLS
+helper DLL with a copy of the host's TLS template. Windows assigns the helper
+an index, the host updates its `_tls_index`, and the loader assigns slot 0 to
+the mapped executable. This run assigned the host index 7. The trace recorded
+physical page allocations and the runtime served the DirectStorage factory,
+created the Vulkan device and called Xbox device slots 26, 48, 73 and 133.
 
-### Next
+With the original shader cache, 4,096 successful presents were logged before
+the test was stopped. There were 14 missing vertex shader messages.
+The cache lacked the `exe` and `library` shader indexes. After translating all
+10 embedded executable programs with wave64 emulation, all 10 passed
+`spirv-val`, the shader library grew from 26,573 to 26,583 entries, and the
+missing vertex shader messages disappeared. Slot 67 still reported missing
+compute programs. All 134 distinct missing compute code digests from the
+original run matched programs in the extracted pipeline library. This
+comparison covered the program bytes. Slot 67 also uses the dispatch-state
+digest when looking up the translated program.
 
-1. Merge or build `forge/fix/black-frames-2` on top of this and compare.
-2. `LEONIDA_PROBE=all` splits a black frame into "the shaders" versus "everything else".
-3. `LEONIDA_DEBUG_CLEAR=1` turns all-zero clears magenta: if the window stays black with
-   that on, the present path is not reaching the swapchain at all.
+Leonida revision `ca96814` from `forge/fix/black-frames-2` adds descriptor
+writeback and texture view lookup in slot 70. A separate build with the same
+shader cache presented successfully through call 4,096. A client-area capture
+of its fallback window sampled one color. Repeating with
+`LEONIDA_DEBUG_CLEAR=1` produced a uniform magenta client area
+(`#FF00FF`), confirming that a render-target clear reaches the window.
+With `LEONIDA_PROBE=all`, the Vulkan layer logged that it installed the
+full-screen triangle and solid-green shaders, while the sampled client
+area stayed black. The translated compute pipeline library was absent
+during these runs.
+
+The all-target build of `ca96814` hit MSVC C1002 after producing the runtime
+binaries. Packaging those binaries with `--runtime-build` succeeded.
 
 ## Build wrapper
 
