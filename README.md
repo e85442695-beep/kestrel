@@ -14,9 +14,16 @@ around protection. Everything the build produces stays on your disk.
 |---|---|
 | Package check (1.0.2.1) | 108 files present |
 | Shader archive | 26,503 FSSM programs translated and validated with `spirv-val` |
+| Native shader digests | 25,321 entries in `native_hashes.txt`; device slot 57 resolves every pipeline |
 | Runtime | Builds from the Leonida forge checkout on Windows |
 | Startup | `menu-stack` maps four modules with zero unresolved imports, passes TLS initialization and opens files through DirectStorage |
-| Vulkan presentation | The render loop submits frames successfully. The previous visible run had a black frame. A usable menu is still unverified. |
+| Render loop | 601 draws and 2048 presents in under a minute; a pass draws into the very resource that is presented |
+| Draw path | `LEONIDA_PROBE=all` paints a full-screen green frame through the same pipeline, render targets and compose |
+| Frame contents | Still black. Placed textures never receive data, and every FidelityFX compute pipeline fails on 13 programs missing from the index |
+| Menu | Not reached |
+
+Measured, not claimed: [docs/FINDINGS.md](docs/FINDINGS.md) has every number and the patch that
+produced it. `patches/` holds one change per finding, each applying to the `menu-stack` checkout.
 
 Kestrel's build wrapper uses a sibling `Kestrel-upstream` checkout by default.
 Set `KESTREL_SOURCE` to use a different checkout or `KESTREL_PYTHON` to point to
