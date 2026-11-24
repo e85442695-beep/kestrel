@@ -1749,3 +1749,36 @@ This is a hypothesis with a test: gfx1013's opcode table. It is not a guess I wi
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 (`v_dot4` literal), 4 (SMEM; gfx1013 numbers this opcode differently) |
+
+---
+
+## 52. The opcode really is the 16-dword buffer load: 848 of 1070 match it in range
+
+Scanning every FSPX blob for words whose top bits are the SMEM signature with opcode 12, and whose second
+word carries a SMEM tail signature, gives:
+
+```
+opcode-12 SMEM words: 1070   in-range as a 16-dword load: 848   out of range: 222
+```
+
+So the opcode is confirmed by the corpus itself: the great majority of those words are ordinary
+`s_buffer_load_dwordx16` with legal registers. Our four failing words belong to the 222 that are not — and
+by the fields measured in sections 50–51 they name `s[92:107]` with base `s[104:107]`.
+
+That leaves exactly one explanation standing, and it is not about the encoding at all:
+
+**the console's SGPR file is larger than the PC's 104 registers.** A 16-dword destination at s92 and a base
+at s104 are legal if the part has at least 120 scalar registers; on gfx1030's table they are not, which is
+why llvm-mc refuses the word while accepting the same opcode with smaller indices.
+
+Whether gfx1013 has that many scalar registers is a hardware question, not a decoding one, and it decides
+the fix: if it does, the disassembler should accept these two fields as-is and print the instruction
+(ranges beyond 103 are the console's, not an error); if it does not, the word means something else again.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (`v_dot4` literal), 4 (SMEM naming SGPRs above the PC's file) |
+| corpus fact | 1070 opcode-12 words, 848 legal on gfx1030, 222 not |
