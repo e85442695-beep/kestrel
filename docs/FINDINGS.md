@@ -175,3 +175,22 @@ synchronization, so the existing scheduler can use an exchange in guarded
 blocks. The program that hit the assertion translated and passed
 `spirv-val`. All 31 tests in the wave64 scheduler suite passed, including
 the new synthetic test for both opcodes.
+
+## Partial compute pipeline cache
+
+After applying both patches, all 2,684 compute programs were disassembled.
+The translator indexed 1,716 modules that passed `spirv-val`. It rejected
+968 programs, including 894 where a reachable instruction falls through
+into bytes the disassembler could not decode.
+
+The index now contains the code keys of 163 of the 174 compute programs
+missing from the earlier `black-frames-2` run. With the new index loaded,
+`ca96814` logged 16,384 successful presents. At present 4,096, the count
+of slot 67 failures dropped from 144 to 9. The client-area capture still
+sampled only black (`#000000`). Replaying the remaining sampled programs
+in the translator found two blockers, reachable undecoded words and
+`s_bitreplicate_b64_b32` operating on a lane mask.
+
+The focused loader, shader-library and descriptor-heap CTest run passed
+five tests. The optional full `shader_library_corpus` run exited with
+`0xC0000409`.
