@@ -1456,3 +1456,32 @@ answer (it reads `op_sel`, `op_sel_hi`, `clamp` and treats S2 as the plain 32-bi
 So this class splits cleanly in two: a decoder change (bit 60 > `op_sel_hi_2`, no semantics needed to
 print it) and a translator rule (what the field does to `v_dot4_i32_i8`, which needs measuring or an ISA
 statement).
+
+
+---
+
+## Slot 70 typed buffer and texture views on menu-stack
+
+The stock slot 70 handler accepts raw R32_TYPELESS buffers. A startup trace
+also showed two R16_UINT buffer views and one R8_UNORM Texture2D view. The
+patch in `patches/menu-stack-texture-srv.patch` routes R16_UINT views to the
+existing Vulkan buffer SRV path and resolves texture views by the registered
+console address. It adapts the texture lookup from Leonida forge revision
+`ca96814` to the menu-stack device and resource lifetimes.
+
+The patch applies to the integration checkout based on menu-stack revision
+`7d0af7c`, with its Vulkan texture backing and SRV format conversion changes
+already present. Apply it from that source tree with `git apply`.
+
+The runtime built with MSVC. The standalone `xs_proxy_mock_test --slot70`
+passed, covering raw and typed buffer ranges, texture depth-plane formats,
+and null views for unknown addresses. The full mock suite hit an access
+violation later in its existing descriptor heap test.
+
+The retail dry run mapped four modules and resolved every import. With an
+initialized local overlay, the boot reached slot 70. The typed views were
+recognized but still resolved to null because their address had no registered
+buffer. No matching live texture was found for the R8_UNORM request either.
+The game stopped on a null read at game-relative offset `0x55aa6f0`, before
+its first present. Slot 70 lookup and the title's fatal path are both still
+open for this run.
