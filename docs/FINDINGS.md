@@ -221,3 +221,20 @@ With the EXEC patch applied, the translated compute library grew from
 all 1,725, alongside the other shader indexes. It still logged missing
 compute shaders in slot 67. Xbox device slot 81 also returned
 `E_NOTIMPL`. Its call contract has yet to be identified.
+
+## Leonardo CPU-visible textures
+
+With `LEONIDA_LAZY_PSO=1`, the title reached a texture initialization
+routine that uses the result of `ID3D12Resource::GetGPUVirtualAddress`
+as a writable address. Under CDB, the runtime stopped in a guest call to
+`memset`, writing through a null base with an offset of 32 bytes. Raising
+the arena to 1 GiB moved the same fault later in the run.
+
+`patches/leonardo-cpu-texture-shadow.patch` enables the fork's write-watched
+texture buffers with `LEONIDA_TEXTURE_SHADOW=1`. The runtime uploads CPU
+writes before queue submission and removes the buffer from the upload
+registry before freeing it. The setting also works with real pipeline
+objects and `LEONIDA_LAZY_PSO=1`. The patched build returned addresses and
+logged successful texture uploads. The next observed failure occurred at
+a guest null write, separate from the earlier crash in `memset`. A usable
+menu remains unverified.
