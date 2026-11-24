@@ -855,3 +855,45 @@ Measured, in order of certainty:
 The next step is the regenerated index: if the 13 hashes appear in it, the FSR pipelines build and the
 run gets past 8192. If they do not, the DLL is producing programs the carve misses and a stand-in
 upscaler is the only way forward.
+
+---
+
+## 29. The 11 FSPX programs fail on one instruction class, and it is decodable
+
+The translator's own words: `29 shaders: 18 translated`, and the eleven that fail all report
+`fall-through into undecodable words`. The disassembler's header names the count per program
+(`9 invalid words` for `_03`), and llvm-mc's messages give the bytes at each offset.
+
+Those bytes are a VOP3P word. Taking the first one (`0xcc165023`, byte3 `0xcc` = VOP3P) and matching it
+against what our llvm-mc can assemble:
+
+| Assembled | Encoding |
+|---|---|
+| `v_dot4_i32_i8 v35, s18, v0, v2` | `0x23,0x40,0x16,0xcc` |
+| target | `0x23,0x50,0x16,0xcc` |
+
+One bit differs: byte1 `0x10`. Mapping the modifier bits by assembling variants:
+
+- `neg_hi:[1,0,0]` sets byte1 bit 0,
+- `op_sel:[1,0]` sets byte1 bit 3,
+- `op_sel:[0,1]` sets byte1 bit 4.
+
+So the refused word is `v_dot4_i32_i8 v35, s18, v0, v2 op_sel:[0,1]` — a normal integer dot product with
+the second source's half selected, and **llvm-mc refuses to assemble it with `op_sel` at all**
+(`none`, not a different encoding). That is why it cannot disassemble it either: the MC layer has no
+operand form for the modifier on this opcode, whatever the hardware accepts.
+
+That is a decoder gap, not a corrupt program, and the instruction is fully recoverable: the mnemonic,
+the four operands and the two modifier bits are all readable from the eight bytes.
+
+`gfx1013` is worse for these programs (1311 invalid words) and `gfx1031/32/34` marginally better than
+`gfx1030` (8 vs 9 for `_03`), so the corpus should stay on `gfx1030` and the gap should be closed in the
+disassembler rather than by switching target.
+
+## Next
+
+A `vop3p` fallback in `tools/shader_disasm.py`, next to `vcc_tuple_patch`: at a reported invalid offset,
+decode the VOP3P word directly (vdst, op, src0/1/2, the `op_sel`/`neg_*` bits), print the instruction
+with its modifiers and the blob's own bytes as the encoding, and let the translator parse it. Nothing is
+dropped, so the shader keeps its semantics; the alternative — clearing the modifier bits so llvm-mc
+accepts the word — would silently change the dot product's operand halves and is not worth it.
