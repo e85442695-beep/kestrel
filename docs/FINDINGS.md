@@ -932,3 +932,48 @@ The remaining classes, in the order they show up in `_03`: words whose top byte 
 `0x1a4a4a2c`, `0x04.89.03.23`...), which look like VOP3/VOP1 with a modifier llvm-mc also refuses. The same
 method applies: read the encoding, prove the mnemonic by assembling the unmodified form, then decode the
 modifier bits explicitly instead of dropping them.
+
+---
+
+## 31. `op_sel` decoded and placed: 19 > 21 of 29
+
+Two follow-ups made the decoder work end to end on the class found in section 30.
+
+**Placement.** `_place` refused every recovered word as misplaced: llvm-mc prints a VOP3P whose
+sources include a literal as eight bytes plus the literal's own word, so the printed encoding never
+equalled the patched bytes. Recovered words now match on their first four bytes (`head_only`), and the
+line's encoding is replaced with the blob's own eight bytes.
+
+**The modifier's width.** The first version emitted `op_sel:[0,1]`; the translator requires the full
+three-element form (the third bit selects the destination's half) and refused the instruction. The
+disassembler now reads byte1 bits 3, 4 and 5 as `op_sel:[s0,s1,d]`.
+
+Result over the FidelityFX corpus, same translator:
+
+| | before | after |
+|---|---|---|
+| translated | 18 / 29 | **21 / 29** |
+| `v_dot4_i32_i8 op_sel` refusals | 2 | 0 |
+
+## 32. What is left: 4 programs, 2 classes
+
+```
+4  fall-through into undecodable words
+1  v_dot4_i32_i8 at 0x338:  the blob holds 364016cc1115d90c, LLVM printed 364016cc1115d91c
+1  v_dot4_i32_i8 at 0x2e54: the blob holds 244016cc2bff6519, LLVM printed 245016cc2f3d910c
+1  v_dot4_i32_i8 at 0x3114: the blob holds 244016cc1c498819, LLVM printed 245016cc1403910c
+1  v_dot4_i32_i8 at 0x13dc: the blob holds 344016cc278dd10c, LLVM printed 344016cc278dd11c
+```
+
+The first is visible in the last byte: the blob has a modifier bit in the instruction's **second word**
+that llvm-mc decodes but does not print (`0x0c` vs `0x1c`), and the translator's encoding check refuses
+the line for it. The other three differ in both words — a literal source whose word is printed
+differently.
+
+Mapping the second word's modifier bits the same way, by assembling `v_pk_add_f16` variants, gives:
+`op_sel_hi[0]` at bit 20 (set means *low* half, so the default is 1), `neg_lo[0]` at bit 21 and
+`neg_lo[1]` at bit 22. Those need the same treatment as `op_sel` on the first word: read from the blob,
+printed explicitly, encoding replaced with the blob's bytes.
+
+The `4 fall-through` programs are a separate class again — not VOP3P at all by their top byte — and are
+the next thing to identify after the second word is handled.
