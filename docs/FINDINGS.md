@@ -721,3 +721,47 @@ Identify method 8's argument layout from the two call sites and implement it as 
 to the destination VA (the destination is in the title's pages, which our `title_va_alias` already maps
 into the GPU address arena, so a shader can reach it). With linear layout on both sides the job is a
 copy; compressed layouts would need the console's block order, which is the larger piece.
+
+---
+
+## 23. The texture computer is a copy, and it is barely used
+
+The six arguments of method 8, measured across the first calls:
+
+```
+a=0x20920e02000 b=0 c=0 d=0x208dc2d7390 e=0x100000100 f=0x8000   a:00000000  d:b0a3978e
+a=0x2092f3c9000 b=0 c=0 d=0x1325bff38c e=0x100000004 f=0x4      a:00000000  d:000000ff
+a=0x2092f3cc000 b=0 c=0 d=0x1325bff380 e=0x100000004 f=0x4      a:00000000  d:808080ff
+```
+
+- `a` is the texture's VA in the title's pages (the 256x128 one from the d3d12 log is exactly `f` = 0x8000 bytes),
+- `b` and `c` are offset and slice and are zero here,
+- `d` is a source pointer in the title's memory, already holding real texel values (`808080ff`, `ffffffff`),
+- `f` is the byte count.
+
+With a linear layout on both sides the job is a copy, so that is what it now does
+(`patches/texture-computer-copy.patch`): `memcpy(a + b, d, f)`, with both ranges checked through
+`VirtualQuery` first, because the destination is the title's own memory and a wrong length would corrupt it.
+
+It runs — `texture computer method 8: 1 copies, 32 KiB written` in a fifty-second run — and the frame is
+still black. So the texture computer is not where this title's textures come from: one 32 KiB job in a
+whole run cannot fill a game's texture set.
+
+## 24. Where that leaves the black frame
+
+Everything measured so far:
+
+| Measurement | Result |
+|---|---|
+| presented resource vs draw targets | the compose pass draws into the presented resource |
+| probe VS + probe PS | full-screen green: the whole draw path works |
+| probe PS only (title VS) | black: the title's vertex output does not cover the target |
+| probe VS only (title PS) | black: the title's pixel output is black |
+| textures via CPU writes | pages stay zero |
+| textures via the computer | one 32 KiB copy per run |
+
+The two single-stage probes are the interesting pair, and neither is conclusive on its own because the
+probe's interface does not match the title's. The next measurement should keep the title's own pipeline
+and read the render target back instead: one readback of the presented image after a frame, summed, says
+whether the passes wrote anything at all — the same question the magenta test answered before, but on the
+real pipeline.
