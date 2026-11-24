@@ -809,3 +809,49 @@ Either way the FSR programs are the next concrete blocker: they live in `amd_fid
 not in `shaders.rpf`, so the translator has nothing for them and every compute pipeline the upscaler asks
 for fails. A stand-in upscaler that answers with a pass-through would at least let the title past this
 point — and this runtime already has a "no-op" answer for exactly this kind of missing piece.
+
+---
+
+## 27. The FSPX mismatch is 13 programs, and the index keys do not line up
+
+The FidelityFX programs do exist, translated:
+
+```
+D:\Leonida-work\shaders\spirv\fspx\  -> 18 .spv, index.json (18 entries), fspx_build.json
+```
+
+but the runtime looks them up by the sha256 of the kind-6 program together with its kind-0 state, while
+the index is keyed by the program's name (`amd_fidelityfx_upscaler_xbox_00`, ...). The hashes the runtime
+asks for are not in it:
+
+```
+distinct failing hashes: 13
+012cc73ded72e2061efec5a0d787c3124dae655a0ff457a8bb14bbec23e6e616
+0dc548b130dc448831b19bbd7544eecb4bf05b9b4a8251726a1ff5737ff40993
+18b18b3302eb2ad02a42dc707d6080b7c9f57c4f3e93643691888b8b339bd320
+...
+```
+
+Thirteen distinct programs the DLL asks for, none of them matched. Either the index was written by an
+older version of the unpacking tools, or the 13 are programs the carve did not produce.
+
+The shader stage is being regenerated with this checkout's tools (`make_game.py --stages check,shaders`),
+which rewrites both the SPIR-V index and the FSPX one; the run above will be repeated against the fresh
+index.
+
+## 28. Where the black frame stands after twelve rounds
+
+Measured, in order of certainty:
+
+1. The whole draw path works: probe shaders paint a full-screen green frame through the same pipeline,
+   the same render targets and the same compose.
+2. The title draws 1162 times in 35 s, and one of its passes draws into the very resource that is
+   presented.
+3. Placed textures never receive data from the title: pages stay zero, no `CopyTextureRegion` is issued,
+   and the texture computer runs once per run.
+4. Every FidelityFX compute pipeline fails, 13 distinct programs, and the run stops presenting at
+   exactly 8192 frames.
+
+The next step is the regenerated index: if the 13 hashes appear in it, the FSR pipelines build and the
+run gets past 8192. If they do not, the DLL is producing programs the carve misses and a stand-in
+upscaler is the only way forward.
