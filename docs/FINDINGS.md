@@ -1171,3 +1171,40 @@ apart, and it is the next measurement rather than another guess.
 The decoder half of the objective now stands at 21 of 29 programs, and the runtime asks for none of the
 missing ones. The black-frame half is blocked on the fatal path above: until the title gets past it, no
 frame — black or otherwise — is produced.
+
+---
+
+## 39. The fatal path is not a physical-page mapping refusal
+
+The build already carries per-reason logging in `XMemMapPhysicalPages` (added in the parallel session's
+working tree), so a null there would say why:
+
+```
+[rt] xmem: XMemMapPhysicalPages(..., refused: <reason>
+```
+
+A run to the fatal path prints **no such line**, and the trace's last event is the physical-page
+allocation itself:
+
+```
+{"seq":22,"kind":"xmem_physical_pages","api":"XMemAllocatePhysicalPages","attributes":"0x380","pages":99776,
+ "caller":"game_scarlett_master.exe+0x1e6c232"}
+```
+
+so the title dies after that allocation and not inside the mapping shim. What happens between the
+allocation and the trap is inside the title's own code, and the layer sees no further shim call: the next
+thing that appears is `mov dword [0],0`.
+
+That narrows the next measurement to the title's own frames: break at the trap's caller
+(`game+0x2215eca`), walk up, and read which routine decided to fail. Instrumenting more shims will not
+help — none is called between the last event and the trap.
+
+## Where the goal stands
+
+| part | state |
+|---|---|
+| FSPX programs translated | 21 / 29 |
+| FSPX programs the runtime asks for and misses | 0 |
+| classes closed | `op_sel` on the first word |
+| classes open | second-word modifier bit (4 programs), one undecoded word class (4 programs) |
+| frame | none: the title takes its fatal path before its first present |
