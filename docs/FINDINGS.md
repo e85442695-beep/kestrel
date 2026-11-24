@@ -1125,3 +1125,49 @@ Before this change the same point produced a refusal in milliseconds. So the pip
 parallel session added (`pipeline_cache.bin`, 336 MB loaded in this run) is the right place for this,
 and the next run after a warm cache should not stall. That is the thing to measure next: whether the
 second and third runs past this point are as slow as the first.
+
+---
+
+## 38. With the FSR pipelines real, the title takes its own fatal path
+
+Two consecutive runs, cold and warm cache, end in the same place and never present:
+
+```
+run 1: alive=False, no presents
+run 2: alive=False, no presents
+...
+[rt] dstorage: IDStorageFactoryX2::CreateQueue1 ... serving the queue interface
+```
+
+Under cdb the reason is visible — not a crash in the layer, but the title's own fatal path:
+
+```
+00000001`42215c35  c7042500000000  mov dword ptr [0],0     <-- deliberate trap
+    0x00000001`42215eca                                       <-- its caller
+```
+
+That is the same `mov dword [0],0` seen in the very first sessions: the title's "unrecoverable" helper,
+which it calls after something it considers fatal. The registers carry no message; the helper is called
+from one place.
+
+So the sequence is: the FSR pipelines that were refused before are now built, the title dispatches them,
+something in that path fails, and the title gives up — which is why the run no longer reaches 2048
+presents. Before the decoder work, the refusal was swallowed as "missing shader" and the title carried on
+with black frames.
+
+Two readings, and they need different fixes:
+
+1. the FSR dispatch is the failure — bindings, dispatch state or the upscaler's own resource layout,
+2. or the fatal path was always going to happen and the earlier refusals were masking it.
+
+## Next
+
+Break at the trap's caller (`game+0x2215eca`) and walk back: the frame above it is the routine that
+decided to fail, and its arguments say which check tripped. That is the only way to tell the two readings
+apart, and it is the next measurement rather than another guess.
+
+## Note on the goal
+
+The decoder half of the objective now stands at 21 of 29 programs, and the runtime asks for none of the
+missing ones. The black-frame half is blocked on the fatal path above: until the title gets past it, no
+frame — black or otherwise — is produced.
