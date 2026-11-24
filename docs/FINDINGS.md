@@ -162,3 +162,16 @@ matched the unpatched output. The largest sample's diagnostics fell to 42 KB.
 
 From an unpatched Leonida checkout, apply the patch with `git apply <path to
 llvm-mc-diagnostics.patch>` before building the shader library.
+
+## Wave64 scheduling for LDS append and consume
+
+The compute library hit the translator's sync-free multi-wave assertion.
+`ds_append` reached a conditional inline block even though the instruction
+broadcasts the old LDS value through a wave exchange. The same path handles
+`ds_consume`.
+
+`patches/wave64-lds-barriers.patch` classifies both operations as requiring
+synchronization, so the existing scheduler can use an exchange in guarded
+blocks. The program that hit the assertion translated and passed
+`spirv-val`. All 31 tests in the wave64 scheduler suite passed, including
+the new synthetic test for both opcodes.
