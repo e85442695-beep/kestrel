@@ -626,3 +626,45 @@ The second keeps every image as it is and is the smaller change from here: the c
 built as one `CommandList`; what has to change is who submits it.
 
 The flag stays off, the runtime keeps its 1024 presents in forty-five seconds.
+
+---
+
+## 19. Host image copy: no queue, no stall — and the pages stay zero
+
+The upload moved to `VK_EXT_host_image_copy`: the placed texture is created on a CPU-visible heap, which
+makes it host-transfer capable, and the pages go in with `vkCopyMemoryToImageEXT` — a memcpy on the
+CPU with no queue, no submission and nothing to contend with.
+
+That fixed the stall completely. With the upload enabled the run keeps its full frame rate:
+
+```
+title-placed texture 3840x2160 fmt 65: host-copied 8100 KiB in 224.56 ms (no queue)
+title-placed texture 2048x2048 fmt 87: host-copied 16384 KiB in 449.65 ms (no queue)
+1024 presents in 50 s
+```
+
+The frame is still black, and the reason is now measurable rather than guessed: **the pages are zero
+when the copy runs, and they stay zero.** A deferred variant that waited for the first non-zero bytes
+uploaded nothing at all in fifty-five seconds — not one of the watched textures ever received a CPU
+write. Sample taken at creation, for every texture:
+
+```
+placed texture sample at ...: 3840x2160 fmt 65, first 4096 B sum 0, non-zero 0
+```
+
+So whatever fills these textures is not a CPU write into the title's pages. Either the title's GPU work
+writes into the resource through descriptors (which our committed image receives correctly already), or
+the pages are written through a path our memory does not see.
+
+That moves the question away from textures: if the GPU writes are reaching our committed images, the
+black frame is in the passes themselves, not in their inputs.
+
+## 20. What the magenta test actually says
+
+Re-reading the earlier magenta capture with this in mind: the presented target comes out **uniformly
+magenta** with the debug clear on, which means the last thing written to it is a clear, not a draw. The
+601 full-screen triangles are drawing into other targets, and whatever is supposed to compose them onto
+the presented one does not happen — or happens into a resource the compose does not read.
+
+That, not the textures, is the next thing to measure: log which render target every draw binds, and
+whether the presented resource is ever a draw target at all.
