@@ -1704,3 +1704,48 @@ mock test passed. The retail run on the GTX 1650 wrote an R16_UINT descriptor
 from XMem and reported no missing buffer for the two startup calls. The
 R8_UNORM texture still had no matching live texture. Startup still stopped
 on a null read at `0x55aa6f0` before the first present.
+
+---
+
+## 51. The quantum is one, the exact bytes cannot be reproduced, and the gfx1013 reading that would fit
+
+Testing whether the 512-bit form quantizes its register fields, on gfx1030:
+
+| operands | SDATA field | SBASE (?2) |
+|---|---|---|
+| `s[8:23], s[8:11]` | 8 | 8 |
+| `s[16:31], s[16:19]` | 16 | 16 |
+| `s[24:39], s[24:27]` | 24 | 24 |
+| `s[88:103], s[88:91]` | 88 | 88 |
+
+Quantum is **one**: the fields are raw register indices (and LLVM even accepts a 16-dword range ending at
+s103). So section 50's mapping stands.
+
+Trying to reproduce the blob's bytes directly fails, and for a plain reason:
+
+```
+s_buffer_load_dwordx16 s[92:107], s[104:107], 0x1a190   ->  none
+target bytes                                            ->  34 17 30 f4 90 a1 01 fa
+```
+
+`s[92:107]` runs past the register file, and the assembler refuses it. The word is therefore **not** a
+gfx1030 `s_buffer_load_dwordx16`.
+
+One reading fits every measured field of the blob without contradicting anything:
+
+- opcode 12 on gfx1013 is a **256-bit** buffer load (8 dwords) rather than the 512-bit one gfx1030 numbers
+  there, and
+- its SBASE field counts in units of **one** SGPR rather than two.
+
+Then SDATA = 92 > `s[92:99]` (legal) and SBASE field 52 > `s[52:55]` (legal), and the instruction is a
+perfectly ordinary `s_buffer_load_dwordx8`. That would also explain why the second word is a well-formed
+SMEM tail while nothing else about the instruction decodes.
+
+This is a hypothesis with a test: gfx1013's opcode table. It is not a guess I will act on.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (`v_dot4` literal), 4 (SMEM; gfx1013 numbers this opcode differently) |
