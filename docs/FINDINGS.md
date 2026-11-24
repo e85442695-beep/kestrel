@@ -274,13 +274,18 @@ depth view refused:   resource 118 (D16_UNORM_S8_UINT)  requested 56 (R16_UNORM)
 stencil view refused: resource 118 (D16_UNORM_S8_UINT)  requested 62 (R8_UINT)
 ```
 
-The console lets a depth plane be read through the plain typed format of the same
-width, and the stencil plane as a plain 8-bit unsigned. Vulkan expresses the same cast
-through its depth-stencil compatibility family, and the runtime already builds the view
-on the resource's own VkFormat, so only the guest-facing T# changes.
+The Xbox adapter resolves these plain formats to the corresponding D3D12
+plane formats before forwarding the view. The desktop API still applies
+its existing format-family checks. Both Xbox SRV paths use the same
+normalization.
 
-`patches/depth-stencil-plain-views.patch` adds those pairs. The rebuild produces a
-runtime with those three refusals gone.
+Apply `patches/depth-stencil-plain-views.patch` to Leonardo revision
+`a08e887` after `leonardo-show-present-window.patch`,
+`leonardo-cpu-texture-shadow.patch` and `leonardo-track-copy-stalls.patch`.
+The patch is UTF-8 with LF line endings. The `d3d12_descriptor` test
+passed on the GTX 1650 with Vulkan validation enabled. It checks that
+the three translated descriptors resolve to real bindless entries and
+that the desktop proxy still rejects the plain formats.
 
 ### XGSuggestSwizzleMode answered linear
 
