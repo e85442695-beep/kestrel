@@ -238,3 +238,22 @@ objects and `LEONIDA_LAZY_PSO=1`. The patched build returned addresses and
 logged successful texture uploads. The next observed failure occurred at
 a guest null write, separate from the earlier crash in `memset`. A usable
 menu remains unverified.
+
+## Leonardo host-side copies
+
+After the texture shadow fix, CDB stopped at a guest null write in the
+startup hang checker. The checker samples per-thread timestamps. The
+runtime was copying console buffers and uploading CPU-written textures
+before host submissions. Some buffer copies took hundreds of
+milliseconds per submission.
+
+`patches/leonardo-track-copy-stalls.patch` uses the existing
+`host_stall::Scope` for these host-side copies, as the runtime already
+does for pipeline compilation. It applies after the CPU-visible texture
+patch. The host-stall CTest passed. With `LEONIDA_LAZY_PSO=1`,
+`LEONIDA_TEXTURE_SHADOW=1` and `LEONIDA_ARENA_MB=1024`, the build stayed
+alive beyond the earlier watchdog failure and logged 32 successful
+presents. Later logs reported incompatible depth/stencil views and an
+unsupported texture staging copy. The client capture sampled only black.
+There were zero missing shader messages and zero slot 67 failures in
+this run. The test process was stopped after the capture.

@@ -1,0 +1,31 @@
+diff --git a/runtime/shims/d3d12_vulkan_device.cpp b/runtime/shims/d3d12_vulkan_device.cpp
+index 59beece..843d0e7 100644
+--- a/runtime/shims/d3d12_vulkan_device.cpp
++++ b/runtime/shims/d3d12_vulkan_device.cpp
+@@ -1131,6 +1131,8 @@ struct DeviceState {
+     }
+     void refresh_shadows() {
+         std::lock_guard lock(shadow_mutex);
++        if (shadows.empty()) return;
++        const rt::host_stall::Scope copying;
+         for (const Shadow& s : shadows) {
+             if (!shadow_sizes_logged.insert(s.size).second) {
+                 copy_title_pages(s.mapped, s.pages, s.size);
+diff --git a/runtime/shims/title_textures.cpp b/runtime/shims/title_textures.cpp
+index e157781..ad4a826 100644
+--- a/runtime/shims/title_textures.cpp
++++ b/runtime/shims/title_textures.cpp
+@@ -1,4 +1,5 @@
+ #include "title_textures.h"
++#include "../src/host_stall.h"
+ #include "../src/title_tiling.h"
+ 
+ #include <windows.h>
+@@ -374,6 +375,7 @@ bool create_view(ID3D12Device* device, std::uint64_t resource_desc, std::uint64_
+ 
+ void refresh(ID3D12Device* device) {
+     const std::lock_guard lock(g_mutex);
++    const rt::host_stall::Scope uploading;
+     ++g_submission;
+     // Views made in the last few submissions are copied again; older ones take turns, within a budget.
+     std::uint64_t budget = 4ull << 20;
