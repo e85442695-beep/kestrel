@@ -765,3 +765,47 @@ probe's interface does not match the title's. The next measurement should keep t
 and read the render target back instead: one readback of the presented image after a frame, summed, says
 whether the passes wrote anything at all — the same question the magenta test answered before, but on the
 real pipeline.
+
+---
+
+## 25. The pages are empty at upload time, in every texture
+
+The upload now reports what it is about to copy:
+
+```
+upload source 3840x2160: 0 non-zero bytes in the first 64 KiB
+upload source 2048x2048: 0 non-zero bytes in the first 64 KiB
+upload source 2560x1440: 0 non-zero bytes in the first 64 KiB
+```
+
+Every texture, every time: nothing was ever written into the title's pages. Combined with the two other
+measurements — zero `CopyTextureRegion` calls in a whole run, and one 32 KiB texture-computer job — the
+conclusion is that this title does not fill its placed textures the way the layer assumed. Whatever it
+does instead, it has not happened yet at this point in the run.
+
+## 26. A long run stalls at exactly 8192 presents
+
+Five minutes, two captures 150 s apart, both black:
+
+```
+at 150s: PresentX call 8192, 8192 presented so far
+at 300s: PresentX call 8192, 8192 presented so far
+```
+
+The present count stops at 8192 while the process keeps running, and what it keeps doing is failing
+FidelityFX compute pipelines:
+
+```
+no translated compute shader for FSPX kind-6 and kind-0 sha256 0dc548b1...
+slot 67 call 185 failed with 0x80070057 (kind 0 28 B, kind 1 20 B, kind 6 19904 B, kind 7 3096 B)
+... 193 failures in this run
+```
+
+8192 is 2^13, the size of a texture ring a frame graph typically allocates. Two possible readings: the
+title finished presenting a loading sequence and moved on to the upscaler, which it cannot build, or it
+is waiting on a pipeline that will never arrive and the present loop stopped as a consequence.
+
+Either way the FSR programs are the next concrete blocker: they live in `amd_fidelityfx_upscaler_xbox.dll`,
+not in `shaders.rpf`, so the translator has nothing for them and every compute pipeline the upscaler asks
+for fails. A stand-in upscaler that answers with a pass-through would at least let the title past this
+point — and this runtime already has a "no-op" answer for exactly this kind of missing piece.
