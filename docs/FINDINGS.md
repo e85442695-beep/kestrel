@@ -445,3 +445,61 @@ The frame is drawn and then goes missing between the shader and the swapchain. C
 2. Wave64 emulation is wrong in a way that keeps every fragment but zeroes its colour.
 3. The pixel shader reads textures that are still black, and everything else is correct — the
    next measurement is a texture read back from the GPU after a frame.
+
+---
+
+## 14. Every draw is a full-screen triangle, and the textures are empty
+
+Two measurements narrow the black frame to one subsystem.
+
+**The draws are quads.** The first thirty draws of a run, with arguments:
+
+```
+[rt] draw #1 instanced: vertices=3 instances=1 first_vertex=0 first_instance=0
+... (601 draws, all 3 vertices)
+```
+
+Every draw is a single full-screen triangle. So the geometry is not off-screen, the viewport is not
+wrong, and the vertex shader is not misplacing a mesh: the title is running a chain of full-screen
+passes, one per draw, and each samples the previous pass's output.
+
+**The textures are empty.** Title-placed resources (Xbox device slot 133) take one of three paths in
+`create_at_host_address`:
+
+| Resource | Path |
+|---|---|
+| buffer | host-visible import of the title's pages, or a shadow buffer copied before every submission |
+| texture | **an ordinary committed texture; the title's pages never reach it** |
+
+That log line, once per run:
+
+```
+[rt] d3d12: a title-placed texture (device slot 133) is an ordinary committed texture,
+            not the title's pages; dimension 3
+```
+
+and a sample of the pages at creation time, for the first eight textures:
+
+```
+placed texture sample at ...: 3840x2160x1 fmt 65 mips 1, first 4096 B sum 0, non-zero 0
+placed texture sample at ...: 2048x2048x1 fmt 87 mips 1, first 4096 B sum 0, non-zero 0
+```
+
+The pages are all zero at creation, so the title fills them afterwards. A one-shot upload at
+creation would copy nothing; the copy has to happen after the title's own writes, on the path the
+shadow buffers already use.
+
+So the black frame is a texture-visibility problem: the passes run, sample textures that never
+receive the title's data, and produce black.
+
+## Next
+
+Give title-placed textures the same treatment as title-placed buffers:
+
+1. a staging buffer holding the texture's texel data in the title's layout (linear, since
+   `XGSuggestSwizzleMode` now answers linear),
+2. an upload before a submission that uses the texture,
+3. a dirty rule so a 2048x2048 texture is not re-uploaded every frame.
+
+`patches/placed-texture-sampling.patch` adds the draw-argument logging and the page sample that
+produced the numbers above.
