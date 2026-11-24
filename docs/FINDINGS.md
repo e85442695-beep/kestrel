@@ -147,3 +147,18 @@ finds the sibling `Kestrel-upstream` checkout or uses an explicit `KESTREL_SOURC
 Set `KESTREL_PYTHON` to the full interpreter path when Python 3.12 or newer
 is outside PATH. Game, output and work paths are resolved before the wrapper
 changes directories.
+
+## LLVM disassembler diagnostics
+
+The first pipeline-library build hit Python `MemoryError` while reading
+`llvm-mc` diagnostics. The disassembler sent each program as one line, and
+LLVM repeated that line for every invalid encoding. A single listing reached
+95 MB.
+
+The patch in `patches/llvm-mc-diagnostics.patch` wraps the byte tokens after
+every 32 bytes and sends the whole stream to the same `llvm-mc` invocation.
+On ten programs, the emitted instruction text and invalid-encoding counts
+matched the unpatched output. The largest sample's diagnostics fell to 42 KB.
+
+From an unpatched Leonida checkout, apply the patch with `git apply <path to
+llvm-mc-diagnostics.patch>` before building the shader library.

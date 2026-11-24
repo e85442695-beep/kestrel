@@ -1,0 +1,19 @@
+diff --git a/tools/shader_disasm.py b/tools/shader_disasm.py
+index af5a3c3..a0b70b3 100644
+--- a/tools/shader_disasm.py
++++ b/tools/shader_disasm.py
+@@ -93,7 +93,13 @@ def disasm(code: bytes, mcpu: str, backend: str = "llvm-mc", wave32: bool = True
+     if backend == "python":
+         asm, bad = rdna2_decode.disasm_bytes(code, mcpu=mcpu, wave32=wave32)
+         return asm, bad, ""
+-    text = " ".join(f"0x{b:02x}" for b in code)
++    # LLVM repeats the source line for each invalid encoding. Bound that line
++    # without splitting the byte stream passed to the disassembler.
++    bytes_per_line = 32
++    text = "\n".join(
++        " ".join(f"0x{byte:02x}" for byte in code[offset:offset + bytes_per_line])
++        for offset in range(0, len(code), bytes_per_line)
++    )
+     try:
+         p = subprocess.run(MC + ["--disassemble", f"-triple={TRIPLE}", f"-mcpu={mcpu}", "-show-encoding"],
+                            input=text, capture_output=True, text=True, errors="replace",
