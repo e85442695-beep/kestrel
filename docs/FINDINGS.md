@@ -1564,3 +1564,44 @@ destination range or of the base), not a missing opcode.
 Decode SDATA/SBASE from `0xf4301734` and print the instruction directly, the way the VOP3P class is printed
 now: the mnemonic and the register ranges are all in those bytes, and the second word carries the offset
 and soffset. Four programs turn on this one instruction.
+
+---
+
+## 48. SMEM field mapping measured — and the target word falls outside it
+
+Assembling `s_buffer_load_dwordx16` with different register pairs maps the two low bytes of the first
+word:
+
+| operands | byte0 | byte1 |
+|---|---|---|
+| `s[0:15], s[4:7]` | 0x02 | 0x00 |
+| `s[16:31], s[4:7]` | 0x02 | 0x04 |
+| `s[0:15], s[8:11]` | 0x04 | 0x00 |
+| `s[8:23], s[12:15]` | 0x06 | 0x02 |
+| `s[4:19], s[16:19]` | 0x08 | 0x01 |
+
+So **byte1 = SDATA/4** (16>4, 8>2, 4>1, 0>0) and **byte0 bits 1..6 = SBASE/4** (4>2, 8>4, 16>8), with
+bit 0 unused in every sample.
+
+Applying that to the blob's word `0xf4301734`:
+
+- `byte1 = 0x17 = 23` > SDATA = 92, i.e. `s[92:107]`
+- `byte0 = 0x34` > field `0x1A = 26` > SBASE = 104
+
+Both are **outside the SGPR file** (the register count tops out at 102, and a 16-dword destination at 92
+runs to 107). llvm-mc refuses the encoding for exactly that reason: under this mapping the instruction
+names registers that do not exist.
+
+That means the mapping is incomplete rather than the instruction being different — byte 2 matches the
+`dwordx16` opcode exactly — so one of the two low bytes carries an extra field, most plausibly a flag in
+bit 0 of byte0 (zero in all five samples, which is why it never showed) or a split SDATA field. Deciding
+between those needs one assembly with a 16-dword destination at a *high but legal* register pair, which
+this mapping predicts precisely: `s[84:99], s[100:103]` should encode SDATA=21 and SBASE=25, and if the
+blob's word decodes to legal values under a corrected mapping it will be printable.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 programs (`v_dot4` literal), 4 programs (this SMEM instruction) |
