@@ -1404,3 +1404,55 @@ The bit position of `op_sel_hi_2` is in the same repository's `machine_insts.h`,
 the disassembler can decode that bit the way `op_sel` was decoded, and the four Group A programs follow.
 Note what the emulator's `v_dot4_i32_i8` shows: the field changes which half of the *third* source is read,
 not the dot product's arithmetic, so printing it explicitly is both correct and sufficient.
+
+---
+
+## 45. Bit positions measured: everything llvm-mc can print, and the one bit it cannot
+
+Assembling one modifier at a time on `v_pk_fma_f16` / `v_dot2_f32_f16` and diffing the eight bytes gives
+the whole modifier map for the VOP3P encoding, in absolute bit positions of the 64-bit instruction:
+
+| field | element | absolute bit |
+|---|---|---|
+| `op_sel` | source 0 / 1 / 2 | 11 / 12 / **13** |
+| `clamp` | — | 15 |
+| `neg_hi` | source 2 | 10 |
+| `op_sel_hi` | source 0 / 1 | 35 / 36 |
+| `neg_lo` | source 0 / 1 / 2 | 37 / 38 / **63** |
+
+Evidence, as the bytes llvm-mc prints:
+
+```
+v_pk_fma_f16 v2, s18, v0, v2                -> 0x02,0x40,0x0e,0xcc, 0x12,0x00,0x0a,0x1c
+v_pk_fma_f16 v2, s18, v0, v2 op_sel:[0,0,1] -> 0x02,0x60,0x0e,0xcc, …          (byte1 +0x20 = bit 13)
+v_pk_fma_f16 v2, s18, v0, v2 clamp          -> 0x02,0xc0,0x0e,0xcc, …          (byte1 +0x80 = bit 15)
+v_pk_fma_f16 v2, s18, v0, v2 neg_hi:[0,0,1] -> 0x02,0x44,0x0e,0xcc, …          (byte1 +0x04 = bit 10)
+v_pk_fma_f16 v2, s18, v0, v2 op_sel_hi:[0,0]-> 0x02,0x00,0x0e,0xcc, …          (byte1 -0x40 = bit 11? no: two bits)
+v_pk_fma_f16 v2, s18, v0, v2 neg_lo:[0,0,1] -> 0x02,0x40,0x0e,0xcc, 0x12,0x00,0x0a,0x9c (byte3 +0x80 = bit 63)
+```
+
+The word that fails in the four Group A programs differs from llvm-mc's printing in **absolute bit 60**
+(`w1` bit 28, `0x0c` against `0x1c` in the second word's top byte). No modifier the assembler accepts
+moves that bit, by the table above — which is exactly what an unprintable field looks like, and the emulator
+in section 44 names one: `op_sel_hi_2`, the third source's high-half select, carried outside the two-bit
+`op_sel_hi` field.
+
+## The second half of the problem is in the translator, not the decoder
+
+Even with the bit decoded and printed, the four programs stay refused, because the translator handles only
+the default for that field:
+
+```
+sel = bits("op_sel", [0, 0, 0]); selhi = bits("op_sel_hi", [1, 1, 1])
+if len(sel) != 3 or len(selhi) != 3 or sel[2] != 0 or selhi[2] != 1:
+    raise Unsupported(op + " op_sel")
+```
+
+The comment above it says so in as many words: "non-default S2 half-select is refused". The blob asks for
+that non-default value, so the class needs a rule — and a rule needs a measurement of what the third
+source's half select *means* for an integer dot product, which the emulator's `VDot4I32I8Vop3p` does not
+answer (it reads `op_sel`, `op_sel_hi`, `clamp` and treats S2 as the plain 32-bit addend).
+
+So this class splits cleanly in two: a decoder change (bit 60 > `op_sel_hi_2`, no semantics needed to
+print it) and a translator rule (what the field does to `v_dot4_i32_i8`, which needs measuring or an ISA
+statement).
