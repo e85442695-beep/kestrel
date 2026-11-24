@@ -1363,3 +1363,44 @@ the game thread's TLS block, set that bit, and re-run — or simply call the sette
 title's report routine, which is what the title's own start-up would pass.
 
 Everything else in section 42 stands.
+
+---
+
+## 44. The second-word bit has a name in AMD's own emulator: `op_sel_hi_2`
+
+The RDNA2 ISA PDF could not be fetched, but AMD's own instruction emulator publishes its decoder:
+`ROCm/rocm-systems`, `rocjitsu`, per-architecture tables. The RDNA2 VOP3P definitions there name
+exactly the fields this investigation needed:
+
+```
+class Vop3p : public IsaInstruction<Isa> {
+  void build_modifiers(std::string &out) const override {
+    amdgpu::vop::append_vop3p_disassembly(
+        out, inst->op_sel, inst->op_sel_hi | (inst->op_sel_hi_2 << 2), inst->neg, inst->neg_hi,
+        inst->clamp, vop3p_encoded_source_count(), inst_.op <= 21);
+  }
+```
+
+- `op_sel` — 3 bits, one per source, selected by `(inst_.op_sel & 1)`, `& 2`, `& 4`;
+- `op_sel_hi` — 2 bits, **plus a separate `op_sel_hi_2`** for the third source, combined as
+  `op_sel_hi | (op_sel_hi_2 << 2)`;
+- `neg` and `neg_hi` — 3 bits each.
+
+That is the shape our failing word needs: the difference between the blob and what llvm-mc printed sits in
+a bit that is not part of the two-bit `op_sel_hi` field, and `op_sel_hi_2` is precisely such a bit — the
+third source's high-half select, which llvm-mc's VOP3P operand form has no way to print for `v_dot4_i32_i8`.
+
+Sources, both fetched and read:
+
+- [rocjitsu rdna2 `encodings.h`](https://raw.githubusercontent.com/ROCm/rocm-systems/main/emulation/rocjitsu/lib/rocjitsu/src/rocjitsu/isa/arch/amdgpu/generated/rdna2/encodings.h)
+  (the `Vop3p` class above, and the `kVop3p` / `kVop3pHi*` selectors),
+- [rocjitsu rdna2 `vop3p_exec.cpp`](https://raw.githubusercontent.com/ROCm/rocm-systems/main/emulation/rocjitsu/lib/rocjitsu/src/rocjitsu/isa/arch/amdgpu/generated/rdna2/vop3p_exec.cpp)
+  (`VDot4I32I8Vop3p::execute_impl` reads `op_sel`, `op_sel_hi`, `clamp` and nothing else, so a third-source
+  high-half select cannot affect `v_dot4_i32_i8`'s arithmetic — only the operand fetch it applies to).
+
+## Next
+
+The bit position of `op_sel_hi_2` is in the same repository's `machine_insts.h`, one file further; with it
+the disassembler can decode that bit the way `op_sel` was decoded, and the four Group A programs follow.
+Note what the emulator's `v_dot4_i32_i8` shows: the field changes which half of the *third* source is read,
+not the dot product's arithmetic, so printing it explicitly is both correct and sufficient.
