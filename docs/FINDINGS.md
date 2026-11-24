@@ -503,3 +503,32 @@ Give title-placed textures the same treatment as title-placed buffers:
 
 `patches/placed-texture-sampling.patch` adds the draw-argument logging and the page sample that
 produced the numbers above.
+
+---
+
+## 15. The upload path exists, and it is too slow
+
+`patches/placed-texture-upload.patch` gives a title-placed texture what a title-placed buffer already
+has: the pages it was placed on are remembered, and the image is filled from them before the
+submission that follows creation. The upload goes through the existing `staged_copy` replay, so the
+layout transitions and the D3D12 footprint are the ones the title's own copies use.
+
+It runs, gated behind `LEONIDA_PLACED_TEXTURES=1`:
+
+```
+[rt] d3d12: title-placed texture 3840x2160 fmt 65: uploaded 8100 KiB from the title's pages in 107.82 ms
+[rt] d3d12: title-placed texture 2048x2048 fmt 87: uploaded 16384 KiB from the title's pages in 238.20 ms
+[rt] d3d12: title-placed texture 2048x2048 fmt 87: uploaded 16384 KiB from the title's pages in 174.35 ms
+```
+
+and it is unusable as written: `staged_copy` creates a buffer, replays one copy region and **waits for
+the queue to go idle**, once per subresource. Three textures cost over half a second, and the run
+crawled — one present in fifty seconds instead of two thousand.
+
+The flag is off by default so the runtime keeps its speed. The next version has to:
+
+1. put every subresource of every pending texture into **one** command buffer,
+2. wait once, not once per copy,
+3. upload on the barrier the title uses to say its writes are done, not on the next submission.
+
+The data is there and the path works; what is missing is batching.
