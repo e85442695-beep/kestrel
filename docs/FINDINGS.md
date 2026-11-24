@@ -1685,3 +1685,22 @@ That needs a gfx1013 opcode table or a hardware probe, neither of which this che
 | FSPX | 23 / 29 |
 | open | 2 (`v_dot4` literal form), 4 (SMEM, needs gfx1013 tables) |
 | corrected | SDATA is `[12:6]`, raw 7 bits — sections 48–49 had it as `byte1`/4 |
+
+
+---
+
+## Slot 70 R16_UINT views of XMem
+
+The missing R16_UINT addresses are offsets into the same allocation returned
+by XMemVirtualAlloc. The slot names slices of that allocation directly, so the
+Vulkan backend can encode views over its existing GPU shadow of title memory
+without a D3D12 resource at each address. The fallback only writes a descriptor
+when the requested view fits a contiguous translated range in the arena. It
+uses the same component mapping as a typed SRV of a D3D12 buffer.
+
+Apply `patches/menu-stack-xmem-r16-srv.patch` after
+`patches/menu-stack-texture-srv.patch`. The MSVC build and focused slot 70
+mock test passed. The retail run on the GTX 1650 wrote an R16_UINT descriptor
+from XMem and reported no missing buffer for the two startup calls. The
+R8_UNORM texture still had no matching live texture. Startup still stopped
+on a null read at `0x55aa6f0` before the first present.

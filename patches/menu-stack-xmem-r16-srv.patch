@@ -1,0 +1,137 @@
+diff --git a/runtime/shims/d3d12_vulkan_device.cpp b/runtime/shims/d3d12_vulkan_device.cpp
+index 361e2f8..c4ddaff 100644
+--- a/runtime/shims/d3d12_vulkan_device.cpp
++++ b/runtime/shims/d3d12_vulkan_device.cpp
+@@ -7720,6 +7720,49 @@ public:
+         std::memcpy(reinterpret_cast<void*>(destination.ptr), words.data(), sizeof(words));
+     }
+ 
++    bool write_title_r16_srv(std::uint64_t va, std::uint64_t width, const D3D12_SHADER_RESOURCE_VIEW_DESC& view,
++                             D3D12_CPU_DESCRIPTOR_HANDLE destination) {
++        if (va % 2 || !destination.ptr) return false;
++        std::uint64_t range_start = 0, range_end = 0;
++        auto& aliases = leonida::title_va_aliases();
++        if (!aliases.title_memory(va, range_start, range_end)) return false;
++        std::uint64_t count = std::min(width, range_end - va) / 2;
++        if (view.Buffer.NumElements) count = std::min<std::uint64_t>(count, view.Buffer.NumElements);
++        if (!count || count > UINT32_MAX) return false;
++        const std::uint64_t bytes = count * 2;
++        const std::uint64_t address = vsharp_address(va, bytes);
++        if (address == va || address >= state_.arena.size || bytes > state_.arena.size - address ||
++            aliases.shader_va(va + bytes - 1) != address + bytes - 1) return false;
++
++        leonida::gfx10::Buffer buffer{};
++        buffer.address = address;
++        buffer.stride = 2;
++        buffer.num_records = static_cast<std::uint32_t>(count);
++        buffer.format = leonida::gfx10::format_from_vulkan(VK_FORMAT_R16_UINT);
++        set_typed_buffer_swizzle(buffer, VK_FORMAT_R16_UINT, view.Shader4ComponentMapping);
++        buffer.oob_select = leonida::gfx10::OobSelect::structured;
++        const leonida::gfx10::BufferWords words = leonida::gfx10::encode(buffer);
++        auto* const dest = reinterpret_cast<void*>(destination.ptr);
++        std::memset(dest, 0, kDescriptorSize);
++        std::memcpy(dest, words.data(), sizeof(words));
++        static std::once_flag logged;
++        std::call_once(logged, [] {
++            std::fprintf(stderr, "[rt] d3d12: Xbox slot 70 wrote an R16_UINT buffer view of the title's XMem\n");
++        });
++        return true;
++    }
++
++    static void set_typed_buffer_swizzle(leonida::gfx10::Buffer& buffer, VkFormat format, UINT mapping) {
++        const leonida::gfx10::Swizzle channels = leonida::gfx10::format_swizzle(format);
++        for (unsigned i = 0; i < 4; ++i) {
++            const UINT from = D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(i, mapping);
++            buffer.swizzle[i] = from < 4 ? channels[from]
++                                : from == D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0
++                                    ? leonida::gfx10::select_zero
++                                    : leonida::gfx10::select_one;
++        }
++    }
++
+     // A shader-resource view of a texture is a T# in the slot (docs section 3.4): the shader loads those eight
+     // dwords through its descriptor table and finds the image by them. A buffer SRV writes a 16-byte GFX10 V# in the
+     // first half of the slot (raw, structured, or typed). A slot left as zeros is a null descriptor.
+@@ -7797,14 +7840,7 @@ public:
+                 buffer.stride = std::uint32_t(stride);
+                 buffer.num_records = desc->Buffer.NumElements;
+                 buffer.format = code;
+-                const leonida::gfx10::Swizzle channels = leonida::gfx10::format_swizzle(named);
+-                for (unsigned i = 0; i < 4; ++i) {
+-                    const UINT from = D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(i, desc->Shader4ComponentMapping);
+-                    buffer.swizzle[i] = from < 4 ? channels[from]
+-                                        : from == D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0
+-                                            ? leonida::gfx10::select_zero
+-                                            : leonida::gfx10::select_one;
+-                }
++                set_typed_buffer_swizzle(buffer, named, desc->Shader4ComponentMapping);
+                 buffer.oob_select = leonida::gfx10::OobSelect::structured;
+             }
+             buffer.address = vsharp_address(
+@@ -10172,6 +10208,10 @@ void set_device_outer(ID3D12Device* device, IUnknown* outer) {
+             }, [](ID3D12Device* real, std::uint64_t va) -> ID3D12Resource* {
+                 Device* device = Device::from<Device>(real);
+                 return device ? device->add_ref_texture_at(va) : nullptr;
++            }, [](ID3D12Device* real, std::uint64_t va, std::uint64_t width, const D3D12_SHADER_RESOURCE_VIEW_DESC& view,
++                  D3D12_CPU_DESCRIPTOR_HANDLE dest) {
++                Device* device = Device::from<Device>(real);
++                return device && device->write_title_r16_srv(va, width, view, dest);
+             });
+     // And for the same outer: its IDXGIDevice1::GetAdapter (d3d12_xs_device.h) hands
+     // out this layer's adapter, the one create_dxgi_factory enumerates, so a title on the Vulkan device never gets
+diff --git a/runtime/shims/d3d12_xs_device.cpp b/runtime/shims/d3d12_xs_device.cpp
+index 53ec7d9..bd753c6 100644
+--- a/runtime/shims/d3d12_xs_device.cpp
++++ b/runtime/shims/d3d12_xs_device.cpp
+@@ -105,6 +105,7 @@ struct DeviceProxy {
+     DxgiAdapterProvider adapter_provider;
+     ResourceByVaProvider resource_provider;  // slot 70: a buffer by console VA; null leaves slot 70 on the null view
+     TextureByVaProvider texture_provider = nullptr;
++    TitleBufferSrvWriter title_buffer_srv_writer = nullptr;
+     std::atomic<int> gpu_thread_priority;
+     std::atomic<unsigned> max_frame_latency;
+     // The first-frame subset of SetFrameIntervalX/ScheduleFrameEventX/WaitFrameEventX. Tokens were never measured;
+@@ -2799,6 +2800,9 @@ void proxy_create_srv_from_raw_x(DeviceProxy* self, std::uint64_t texture_words,
+     ID3D12Resource* resource = self->resource_provider(self->real, shape.va, shape.resource.Width, &start, &size);
+     if (!resource || shape.va < start || shape.va - start >= size) {
+         if (resource) resource->Release();
++        if (stride == 2 && self->title_buffer_srv_writer &&
++            self->title_buffer_srv_writer(self->real, shape.va, shape.resource.Width, shape.view,
++                                          D3D12_CPU_DESCRIPTOR_HANDLE{destination})) return;
+         log_slot70_null_once("no buffer holds the address", texture_words, view_desc);
+         write_null_srv(self, destination);
+         return;
+@@ -4509,7 +4513,8 @@ bool set_device_adapter_provider(void* device, DxgiAdapterProvider provider) {
+     return true;
+ }
+ 
+-bool set_device_resource_provider(void* device, ResourceByVaProvider provider, TextureByVaProvider texture) {
++bool set_device_resource_provider(void* device, ResourceByVaProvider provider, TextureByVaProvider texture,
++                                  TitleBufferSrvWriter title_buffer) {
+     auto* proxy = static_cast<DeviceProxy*>(device_proxy_primary(device));
+     if (!proxy) {
+         std::fprintf(stderr, "[rt] d3d12_xs: set_device_resource_provider: %p is not a device proxy; no provider set\n",
+@@ -4518,6 +4523,7 @@ bool set_device_resource_provider(void* device, ResourceByVaProvider provider, T
+     }
+     proxy->resource_provider = provider;
+     proxy->texture_provider = texture;
++    proxy->title_buffer_srv_writer = title_buffer;
+     return true;
+ }
+ 
+diff --git a/runtime/shims/d3d12_xs_device.h b/runtime/shims/d3d12_xs_device.h
+index 451312e..7ee82c9 100644
+--- a/runtime/shims/d3d12_xs_device.h
++++ b/runtime/shims/d3d12_xs_device.h
+@@ -134,7 +134,10 @@ using ResourceByVaProvider = ID3D12Resource* (*)(ID3D12Device* real, std::uint64
+ // `device` is the proxy or its DXGI pointer. False, with a line on stderr, when it is neither. Without a provider slot
+ // 70 writes only the null view.
+ using TextureByVaProvider = ID3D12Resource* (*)(ID3D12Device* real, std::uint64_t va);
+-bool set_device_resource_provider(void* device, ResourceByVaProvider provider, TextureByVaProvider texture = nullptr);
++using TitleBufferSrvWriter = bool (*)(ID3D12Device* real, std::uint64_t va, std::uint64_t width,
++                                      const D3D12_SHADER_RESOURCE_VIEW_DESC& view, D3D12_CPU_DESCRIPTOR_HANDLE dest);
++bool set_device_resource_provider(void* device, ResourceByVaProvider provider, TextureByVaProvider texture = nullptr,
++                                  TitleBufferSrvWriter title_buffer = nullptr);
+ // The device proxy an IDXGIDevice pointer handed out by one belongs to, or null.
+ void* device_proxy_from_dxgi_device(void* dxgi_device);
+ // The device proxy itself, given the proxy or its DXGI pointer; null for anything else.
