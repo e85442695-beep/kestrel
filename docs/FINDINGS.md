@@ -1885,3 +1885,30 @@ twelve-byte instruction (because its src1 field is `0xff`) and print twelve byte
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 (the fix now has a known home: `tools/shader_disasm.py`, twelve-byte form), 4 (SMEM) |
+
+---
+
+## 56. Why the disassembler fix is not a patch but a re-anchoring change
+
+A `dot_literal_patch` next to `vop3p_patch` looked like the right shape: rewrite the src1 field of the twelve-byte
+word so llvm-mc decodes its first eight bytes, then print the literal as that operand's value and give the line
+the blob's twelve bytes. It was written, and then removed — because it cannot work by itself:
+
+**llvm-mc does not skip the literal.** After the patched word it starts decoding at `at + 8`, which is the
+literal dword, so every instruction after it is read at the wrong offset. The patch would fix one line and shred
+the listing below it.
+
+Making it correct needs the literal dword replaced by something llvm-mc decodes as a harmless instruction
+(`s_nop 0`), that line dropped from the output, and the real value restored into the operand — a placement
+problem of the same class as `_restore_fma_mix_literals`, on top of the patch.
+
+So the change is real work in the re-anchoring path, not a branch in `mix_literal` and not a one-word patch:
+which is why it was reverted rather than left half-done. `tools/shader_disasm.py` compiles, the tree is clean,
+and the corpus stays at 23 / 29.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (needs re-anchoring work in the disassembler), 4 (SMEM register file) |
