@@ -1290,3 +1290,44 @@ would name the failing subsystem directly.
 | FSPX translated | 21 / 29, none of the missing ones requested by the runtime |
 | fatal path | still there, cause not yet named |
 | frame | none |
+
+---
+
+## 42. Correction: the stack holds a saved return address, not a live frame
+
+Dumping the trap thread's raw stack (not the unwinder's view) shows the value in place and what follows
+it:
+
+```
+rsp+0xa8  00000001`42215eca     <-- the address read as a "caller"
+rsp+0xd8  00007fff`e139dda7     KERNEL32!BaseThreadInitThunk+0x17
+```
+
+Between them there is nothing but zeros. If `0x142215eca` were a live return address, the frame it belongs
+to would have its own caller somewhere above; instead the thread-entry frame sits directly beneath it. The
+consistent reading is that `0x142215eca` is **leftover data in a reused frame**, and the breakpoint at
+`0x142215ec8` never firing supports it: that call did not run on this path.
+
+So the earlier conclusion in section 40 (`[rsi]` is a truncated callback) does not hold either — that
+register belongs to whatever function was actually executing.
+
+## The honest state of this line of work
+
+| | |
+|---|---|
+| FSPX programs translated | 21 / 29 |
+| FSPX programs the runtime asks for and misses | 0 |
+| fatal path | present; the caller is not recoverable from the stack, and no shim is called near it |
+| frame | none |
+
+Reaching the caller needs either working unwind data for the title's frames (`.pdata` registration for
+threads the layer did not create, which the design doc says is done for loaded modules but evidently not
+enough here), or a hook on the report callback at `0x1471b6348`, which is null in this run.
+
+## What is worth doing next, in order
+
+1. Hook `0x1471b6348` at start-up (the helper calls it *before* trapping when it is set) and print its
+   argument — that names the failing subsystem directly.
+2. If it stays null, register `.pdata` for the title on every thread so `kb` can walk its frames.
+3. Only then come back to the two open decoder classes (4 + 4 programs), which are worth 21 > 29 but do
+   not affect the fatal path.
