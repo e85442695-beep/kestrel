@@ -1912,3 +1912,42 @@ and the corpus stays at 23 / 29.
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 (needs re-anchoring work in the disassembler), 4 (SMEM register file) |
+
+---
+
+## 57. The main corpus never touches SGPRs above s103 — the bigger-register-file hypothesis weakens
+
+Scan of the game's own disassembly (26,503 shaders) for any buffer-load whose base register lies above
+s103:
+
+```
+files: 26503
+lines with a buffer-load base above s103: 0
+```
+
+None. The title's own compiler never emits a scalar index beyond the PC's register file, while the
+FidelityFX DLL's failing word names base s104 and destination s92..s107.
+
+Two readings follow, and the first is now the more likely one:
+
+1. **the word is not `s_buffer_load_dwordx16` after all** — the console numbers that opcode differently, and
+   the fields only look like registers because the layout is being applied to the wrong instruction; or
+2. the console has a larger scalar file and only this DLL's compiler uses it, which would be a strange
+   corner for a shader compiler to occupy.
+
+Reading 1 fits the earlier corpus count too (848 of 1070 opcode-12 words legal): those are ordinary
+16-dword loads, and the four failures could be a different instruction that shares the SMEM signature and
+the value 12 in the opcode field under gfx1030's numbering.
+
+## Next
+
+Compare the four words against the SMEM opcodes that *do* accept base s104 and destination s92 under a
+different field split — one assembled instruction per candidate opcode (`s_buffer_load_dwordx8`,
+`s_buffer_load_dwordx4`, `s_atomic_*`) is enough to see which produces `34 17 30 f4`.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (literal), 4 (this class; the register-file explanation is now the weaker one) |
