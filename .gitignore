@@ -1,0 +1,17 @@
+# build output
+dist/
+build/
+out/
+*.exe
+*.dll
+*.pdb
+
+# game data ? never
+*.rpf
+*.ttpf
+*.xvd
+*.bik
+
+# local scratch
+.env
+*.log
