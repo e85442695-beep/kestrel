@@ -668,3 +668,56 @@ the presented one does not happen — or happens into a resource the compose does 
 
 That, not the textures, is the next thing to measure: log which render target every draw binds, and
 whether the presented resource is ever a draw target at all.
+
+---
+
+## 21. The presented image is drawn into; the passes just produce black
+
+Two log lines settle it. The swapchain is handed one resource:
+
+```
+xbox_present: presenting resource id 0x202cc5d03f0
+```
+
+and a pass binds that very resource as its render target:
+
+```
+draw #4 instanced: vertices=3 instances=1 ... targets=1 rt0=0x202cc5d03f0
+```
+
+The other passes bind a scene target (`0x204fdd25ec0`) and two more, with a depth buffer. So the
+chain is: passes render the scene, a full-screen pass composes it into the presented image, the
+swapchain gets that image. Nothing is lost between passes.
+
+The frame is black because the *content* is black, and with the probe shaders it is green — so the
+geometry, the pipeline states, the bindings and the compose are all fine. What is wrong is what the
+title's own shaders read.
+
+## 22. Nothing ever fills the textures
+
+Two candidates, both measured:
+
+1. **CPU writes into the title's pages.** Every sample at creation reads zero, and a deferred upload
+   that waited for the first non-zero byte uploaded nothing in fifty-five seconds.
+2. **The console's texture computer.** `XGCreateTextureComputer` hands out a stand-in whose methods
+   answer `S_OK` and do nothing:
+
+```
+[rt] xg_xs: XGCreateTextureComputer: stand-in computer, PC layout is linear (caller ...+0x16f7146)
+[rt] xg_xs: texture computer method 8: linear layout, no-op (caller ...+0x16f71ff)
+```
+
+The call shapes are known from the log — method 8 is called with six arguments
+(`0x14f94402000 0x0 0x0 0x14f4f941040 0x100000100 0x8000`), the first being a destination VA in the
+title's pages and one of the rest a source. On the console this is the GPU job that lays compressed
+texture data out for the GPU.
+
+So the textures are never filled by either path: there is no CPU write to copy and the computer that
+would fill them is a no-op. That is the black frame.
+
+## Next
+
+Identify method 8's argument layout from the two call sites and implement it as a copy from the source
+to the destination VA (the destination is in the title's pages, which our `title_va_alias` already maps
+into the GPU address arena, so a shader can reach it). With linear layout on both sides the job is a
+copy; compressed layouts would need the console's block order, which is the larger piece.
