@@ -1605,3 +1605,40 @@ blob's word decodes to legal values under a corrected mapping it will be printab
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 programs (`v_dot4` literal), 4 programs (this SMEM instruction) |
+
+---
+
+## 49. Refined SMEM mapping: SBASE is stored in two-SGPR units — and the blob is still out of range
+
+High, legal register pairs settle the field widths:
+
+| operands | byte0 | byte1 |
+|---|---|---|
+| `s[84:99], s[100:103]` | 0x32 | 0x15 |
+| `s[0:15], s[96:99]` | 0x30 | 0x00 |
+| `s[80:95], s[96:99]` | 0x30 | 0x14 |
+| `s[64:79], s[64:67]` | 0x20 | 0x10 |
+| `s[60:75], s[60:63]` | 0x1e | 0x0f |
+
+- **byte1 = SDATA/4** exactly (84>21, 80>20, 64>16, 60>15),
+- **byte0 = SBASE/2** exactly (100>50, 96>48, 64>32, 60>30), not /4 as section 48 guessed.
+
+Applying it to the blob's `0xf4301734`: `byte1 = 0x17` > SDATA = 92 and `byte0 = 0x34` > SBASE = 104.
+
+Both are still outside the SGPR file, and now by a measured rule rather than an assumed one. So the word's
+fields cannot mean what they mean in every other `s_buffer_load_dwordx16` I can assemble, while bytes 2 and
+3 match that opcode exactly.
+
+Two readings, both testable later and neither worth a guess now:
+
+1. the console's gfx1013 uses a different SDATA/SBASE encoding for this opcode than gfx1030's table, or
+2. byte2's opcode bits are not 12 for this instruction — another SMEM opcode shares `0x30` once the SDATA
+   high bits are folded in.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (`v_dot4` literal), 4 (this SMEM instruction) |
+| corpus knowledge | SDATA/4 and SBASE/2 measured for `s_buffer_load_dwordx16` on gfx1030 |
