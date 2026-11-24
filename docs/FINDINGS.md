@@ -314,3 +314,54 @@ are served, the queue behind them is not.
 
 Reverting the swizzle patch brings the 256 presents back; the frame stays black either
 way, so the patch is kept as the honest next step rather than a regression.
+
+---
+
+## 7. The present path works; the title simply draws nothing
+
+`LEONIDA_DEBUG_CLEAR=1` replaces every all-zero clear colour with opaque magenta. The window
+comes out **entirely magenta** ([docs/magenta-clear.png](magenta-clear.png)).
+
+That settles the shape of the black-frame problem:
+
+- the swapchain exists, frames are presented (256 in 45 s, `PresentX` returning `S_OK`),
+- the title's clears reach the screen through the compose path,
+- so the frame is black because the title clears to black and then **draws nothing**.
+
+`LEONIDA_PROBE=all`, which replaces the vertex and pixel stages with a pass-through pair,
+leaves the frame black as well, so the missing output is not a broken shader in a drawn
+triangle. Nothing is being drawn at all.
+
+## 8. What the title is doing instead
+
+Three measurements from the same run:
+
+1. A thread sits in the title's own hang checker (`game+0x2215B0B`): it samples a timestamp,
+   sleeps 1 s, samples again, and reports a stall when the delta is too large.
+2. 2,689 failures of `DeserializeComputePipelineStateX` (Xbox slot 67, called by
+   `amd_fidelityfx_upscaler_xbox.dll`), all `0x80004005`. These are the DLL's own FSR
+   programs, which are not in `shaders.rpf` and therefore not in the translated index, so the
+   translator has nothing to resolve. They are not what stops the frame.
+3. `slot-133` shadow buffers are copied from the title's pages on every submission; the
+   largest seen is 12 MiB at 193 MiB/s, 62 ms per submission.
+
+So the title is loading, not drawing: it still runs its own watchdog and its buffer copies,
+and the render target only ever receives the clear.
+
+## 9. Diagnostics added
+
+`patches/xmem-map-refusal-log.patch` makes `XMemMapPhysicalPages` say **why** it returns
+null — bad address, placeholder API missing, or "not inside a reserved placeholder window".
+The title turns a null there into an `int3`, and the int3 is skipped, so without the line the
+run simply stops somewhere else.
+
+## Next
+
+The question is no longer "why is the frame black" but "what is the title waiting for".
+The candidates, in order:
+
+1. DStorage reads that never complete: the queue is served, the reads behind it need to be
+   confirmed against the status array the title polls.
+2. Content package mounts that return a path with nothing behind it.
+3. The hang checker's own threshold: it may be firing on the host copies before loading ever
+   finishes.
