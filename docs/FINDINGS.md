@@ -1818,3 +1818,39 @@ fields directly — the same treatment `op_sel` got — and printing the instruction
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 (this class, now reduced to source-field encoding), 4 (SMEM register file) |
+
+---
+
+## 54. The blob does carry a literal after all — in the *source* field llvm-mc read as a register
+
+Mapping the VOP3P source fields by assembling `v_dot4_i32_i8` with known registers:
+
+```
+v4, v5, v9, v12  ->  04 40 16 cc | 05 13 32 1c
+v4, s3, v9, v12  ->  04 40 16 cc | 03 12 32 1c
+v4, s3, s7, v12  ->  04 40 16 cc | 03 0e 30 1c
+```
+
+- `byte0` is **src0's index** raw (v5>5, s3>3),
+- `byte1` is **src1 encoded as `reg*2 + is_vgpr`** (v9>19, s7>14),
+- `byte2` carries src2, `byte3` the modifier bits.
+
+Now the failing blob's second word, `19 65 ff 2b` (`0x1965ff2b`), read with those fields:
+
+- byte1 = **0xff** — the literal marker for src1,
+- byte0 = 0x2b, byte2 = 0x65, byte3 = 0x19.
+
+So the instruction **does** have a literal: src1 is a 32-bit immediate, which makes it twelve bytes, and the literal is the word that follows. llvm-mc read byte1 as a plain register (`0x3d` in its printed word `0x0c913d2f`) and therefore consumed eight bytes instead of twelve — which is also why the printed word differs in every field: the decoder was looking at the wrong instruction entirely.
+
+That reverses the conclusion of section 53: the length question is answered **positively**, just not by the `0xfe`/`0xff` marker in byte2 that a src2 literal would show. The marker sits in src1.
+
+## Consequence
+
+The fix is the one already in the tree for `v_fma_mix*`: recognise the literal form, print the instruction with `lit(0x…)`, and give the line the blob's twelve bytes as its encoding. The two programs should then translate.
+
+## State
+
+| | |
+|---|---|
+| FSPX | 23 / 29 |
+| open | 2 (literal in src1 of `v_dot4`), 4 (SMEM register file) |
