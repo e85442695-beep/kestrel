@@ -977,3 +977,46 @@ printed explicitly, encoding replaced with the blob's bytes.
 
 The `4 fall-through` programs are a separate class again — not VOP3P at all by their top byte — and are
 the next thing to identify after the second word is handled.
+
+---
+
+## 33. Second-word modifiers: the trial-assembly mapping does not hold for `v_dot4`
+
+Trying to map the second word's modifier bits the way the first word's were mapped does not work for
+this opcode. Assembling `v_pk_add_f16` with one modifier at a time moves bits 3 and 4 of the second
+word (`op_sel_hi[0]`, `op_sel_hi[1]`), and `neg_lo[0]`/`neg_lo[1]` move bits 5 and 6:
+
+```
+v_pk_add_f16 v2, s18, v0                  w1=0x12000218
+v_pk_add_f16 v2, s18, v0 op_sel_hi:[0,0]  w1=0x12000200
+v_pk_add_f16 v2, s18, v0 neg_lo:[1,0,0]   w1=0x12000238
+v_pk_add_f16 v2, s18, v0 neg_lo:[0,1,0]   w1=0x12000258
+```
+
+but the four failing `v_dot4_i32_i8` words differ in bit 28 instead:
+
+```
+blob 0x0cd91511   LLVM printed 0x1cd91511     (v_dot4_i32_i8, second word)
+```
+
+Bit 28 is not one of the positions `v_pk_*` uses for these modifiers, and `v_dot4_i32_i8` refuses
+`op_sel`/`op_sel_hi` in llvm-mc entirely, so there is no assembly round trip to confirm what it means.
+Guessing it from the neighbour opcode's layout would be exactly the kind of guess the project forbids.
+
+What is needed is a real source for the VOP3P second-word layout of the integer dot-product opcodes —
+the ISA document's encoding table or a hardware test — and then the same treatment: read the bits from
+the blob, print the modifier, keep the blob's bytes.
+
+The four `fall-through` programs are untouched by all of this: their words are not VOP3P by the top
+byte, and they have not been identified yet either.
+
+## State of the goal
+
+| | |
+|---|---|
+| FSPX translated | 21 / 29 |
+| classes closed | `op_sel` on the first word (sections 30–31) |
+| classes open | second-word modifier bits (4 words), four programs' word class (unidentified) |
+
+The translator suite state from section 30 still stands: 3 files fail in `rdna2spirv.py` image rules,
+pre-existing and unrelated to the decoder changes.
