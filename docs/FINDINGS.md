@@ -1084,3 +1084,44 @@ does not depend on the message formatting.
 Decode `0x1a423656` with the top bits `0x06` as a primary opcode: identify the format, prove the
 mnemonic by assembling candidates and comparing eight bytes, then add its class to the disassembler the
 same way `op_sel` was added. Four programs turn on it, so one class closes 4 of the remaining 8.
+
+---
+
+## 36. The FSPX index now carries 21 programs, and the runtime stops complaining about them
+
+The work folder's FidelityFX index was regenerated with the fixed decoder:
+
+```
+29 FSPX program(s) unpacked
+29 shaders: 21 translated, 21 pass spirv-val
+D:\Leonida-work\shaders\spirv\fspx  -> 21 .spv + index.json
+```
+
+and a run against it reports **zero** missing FSPX programs and **zero** failed compute pipelines of
+that kind, where the same run before the change produced 13 distinct missing hashes and 193 failures:
+
+```
+fspx missing: 0
+slot 67 failed: 0
+```
+
+So the three programs recovered by the `op_sel` work were exactly programs the title asks for — the
+decoder fix pays off in the runtime, not only in a corpus count.
+
+## 37. And now startup stalls for nine seconds
+
+The same run does not reach a present. It ends here:
+
+```
+[rt] dstorage: IDStorageFactoryX2::CreateQueue1 ... serving the queue interface
+[rt] host stall: a guest Sleep(1000) returned 8932 ms late, held while the layer did host-only work
+```
+
+Eight point nine seconds of host-side work, and then the process is gone. The work is new: the FSR
+pipelines that used to be refused are now real, so they are compiled — 21 compute programs, each one a
+translated RDNA2 module — and that compilation happens in the middle of the title's start-up.
+
+Before this change the same point produced a refusal in milliseconds. So the pipeline cache that the
+parallel session added (`pipeline_cache.bin`, 336 MB loaded in this run) is the right place for this,
+and the next run after a warm cache should not stall. That is the thing to measure next: whether the
+second and third runs past this point are as slow as the first.
