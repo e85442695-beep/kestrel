@@ -1208,3 +1208,44 @@ help — none is called between the last event and the trap.
 | classes closed | `op_sel` on the first word |
 | classes open | second-word modifier bit (4 programs), one undecoded word class (4 programs) |
 | frame | none: the title takes its fatal path before its first present |
+
+---
+
+## 40. The fatal helper is reached through an indirect call, and its "object" holds a truncated pointer
+
+Disassembly of the caller of the trap explains why the stack was only two frames deep:
+
+```
+142215ea0  push %rsi
+142215ea5  mov  %rdx, %gs:0x58        ; thread-local storage
+142215eb1  mov  %rax, [%rcx+0x10]
+142215eb5  mov  %rcx, [%rdx]          ; TLS slot 0
+142215eb8  mov  %rax, [%rcx+0x410]
+142215ebf  call 0x1443a42e0
+142215ec4  mov  %rcx, [%rsi+0x8]
+142215ec8  call *(%rsi)               ; <-- indirect: the callee is whatever the struct names
+142215eca  call 0x144de8620
+```
+
+The trap is reached from inside whatever `[rsi]` names. A breakpoint on the indirect call itself does not
+fire before the trap, so the fatal path comes from a different invocation of the same helper.
+
+At the trap, the register that holds the struct is not a valid object:
+
+```
+rsi = 0000009f`655ff988
+[rsi] = 0000006e`02d4663f      <-- 40-bit value, not a code address in the image
+```
+
+`0x6e02d4663f` is far below the image base (`0x140000000`) and far above any heap address in this run; it
+looks like a tagged or truncated pointer rather than a function address. That is consistent with the
+title calling a callback it received from a subsystem that answered with a synthetic value — the same
+class of failure as the very first session's `vtable = 0xFFFFFFFFFFFFFFFF`, but reachable only after the
+FSR pipelines started building.
+
+## Next
+
+Read the struct that the failing invocation is given, not the one at the trap frame: break on the helper's
+entry (`0x142215ea0`), which runs for every invocation, and log `[rsi]` and `[rsi+8]` there. The first
+invocation whose `[rsi]` is not inside the image is the one that fails, and its caller says which
+subsystem handed it over.
