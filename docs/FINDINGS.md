@@ -365,3 +365,83 @@ The candidates, in order:
 2. Content package mounts that return a path with nothing behind it.
 3. The hang checker's own threshold: it may be firing on the host copies before loading ever
    finishes.
+
+---
+
+## 10. The missing piece was native_hashes.txt
+
+`make_game.py` writes `<spirv>/native_hashes.txt` next to the translator's index (the HASH digest of
+every carved container, keyed to its stage and path). It is what device slot 57 — the title's
+"create a graphics pipeline from native code" call — looks its programs up in.
+
+Our work folder never had it, because the shader stage that produces it was never run for this
+checkout. The consequences were 16,384+ refusals in one forty-second run:
+
+```
+[rt] d3d12_xs: slot 57: no native_hashes.txt (block 0); refused with E_NOTIMPL (16384 so far)
+```
+
+Every native pipeline refused means every draw is skipped, which is exactly what a black frame
+looks like.
+
+Generated with the tool the build calls:
+
+```
+python tools/native_pso_hashes.py D:\Leonida-work\shaders\dxbc D:\Leonida-work\shaders\spirv
+native_pso_hashes: 25321 digests -> D:\Leonida-work\shaders\spirv\native_hashes.txt
+```
+
+After that, in a forty-second run: **zero** slot 57 refusals, zero pipeline failures.
+
+## 11. The title does draw
+
+With the digests in place the same run records:
+
+| Call | Count (40 s) |
+|---|---|
+| `SetPipelineState` | 601 |
+| `Draw*` | 601 |
+| `ExecuteCommandLists` | 810 |
+| `PresentX` | 128 > 2048 over 55 s |
+
+So the title is not "still loading" and it is not skipping draws. It draws 601 times and presents
+the result, and the result is black.
+
+## 12. The draw path itself is sound
+
+`LEONIDA_PROBE=all` replaces the vertex and pixel stages with a built-in pass-through pair. The
+window comes out **fully green** ([docs/probe-green.png](probe-green.png)).
+
+That rules out the whole plumbing: geometry reaches the rasteriser, the pipeline state is accepted,
+the render target is bound, and the compose step puts it on screen. What is missing is what the
+title's own shaders compute.
+
+Replacing only one stage (`LEONIDA_PROBE_MODE=ps` or `=vs`) leaves the frame black, because the
+built-in stage and the title's stage disagree on the interface, so that split does not localise
+the fault any further.
+
+`LEONIDA_TEXTURE_SHADOW=1` with `LEONIDA_LAZY_PSO=1` still gives a black frame and 2048 presents,
+so CPU-written textures alone do not explain it either.
+
+## 13. Loads do complete
+
+`patches/dstorage-load-counters.patch` counts what the title hands to its DirectStorage queue. One
+run:
+
+```
+[rt] dstorage: Submit #1, 43 entries queued, 42 requests and 1 statuses so far
+[rt] dstorage: 1 status entries completed
+... (11 and counting)
+```
+
+DirectStorage is not what the title is waiting for.
+
+## Next
+
+The frame is drawn and then goes missing between the shader and the swapchain. Candidates:
+
+1. The translated shaders write to a render target the compose does not read (a resolve, an
+   MSAA target, or an Xbox-only alias).
+2. Wave64 emulation is wrong in a way that keeps every fragment but zeroes its colour.
+3. The pixel shader reads textures that are still black, and everything else is correct — the
+   next measurement is a texture read back from the GPU after a frame.
