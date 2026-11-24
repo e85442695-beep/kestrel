@@ -1331,3 +1331,35 @@ enough here), or a hook on the report callback at `0x1471b6348`, which is null i
 2. If it stays null, register `.pdata` for the title on every thread so `kb` can walk its frames.
 3. Only then come back to the two open decoder classes (4 + 4 programs), which are worth 21 > 29 but do
    not affect the fatal path.
+
+---
+
+## 43. The report callback is gated by a TLS flag, and in this run it is not set
+
+The global at `0x1471b6348` has exactly **one** reference in the whole image — the store that installs a
+handler:
+
+```
+1422161f0  mov  %rax, %gs:0x58        ; TLS
+1422161f9  mov  %rax, [%rax]          ; thread block
+1422161fc  testb $0x1, 0x12d8(%rax)   ; a flag in that block
+142216203  je   142216214             ; not set -> return 0, handler NOT installed
+142216205  mov  %rax, [0x1471b6348]   ; old handler
+14221620c  mov  %rcx, [0x1471b6348]   ; install the new one
+```
+
+So the trap is silent because nothing installed a handler: the flag at `tls+0x12d8` bit 0 is clear in this
+process. That is a property of the run, not of the failure — the title only wires its reporter when that
+flag is set, and whatever sets it either did not run or decided not to.
+
+That closes the "hook the reporter" idea for diagnosis: there is nothing to hook. The way in is the flag:
+set `[tls_block + 0x12d8] |= 1` for the game thread and the next failure will call the title's own reporter
+with its message. Doable from the debugger in one command at the trap.
+
+## Correction to section 42's plan
+
+Point 1 there ("hook `0x1471b6348`") cannot work as written. The corrected step is: at the trap, walk to
+the game thread's TLS block, set that bit, and re-run — or simply call the setter with the address of the
+title's report routine, which is what the title's own start-up would pass.
+
+Everything else in section 42 stands.
