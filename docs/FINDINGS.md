@@ -194,3 +194,14 @@ in the translator found two blockers, reachable undecoded words and
 The focused loader, shader-library and descriptor-heap CTest run passed
 five tests. The optional full `shader_library_corpus` run exited with
 `0xC0000409`.
+
+## Wave64 bit replication into EXEC
+
+Seven compute programs sampled from the slot 67 failures use
+`s_bitreplicate_b64_b32` with a scalar source and the full `EXEC` register
+as the destination. The translator already computes the correct per-lane
+bit when the destination is `VCC`. The patch in
+`patches/wave64-bitreplicate-exec.patch` reuses that computation and writes
+the bit through the existing EXEC setter. A synthetic test starts with
+every lane disabled, checks that each scalar bit enables the correct pair
+of lanes, and checks that both possible SCC values are preserved.

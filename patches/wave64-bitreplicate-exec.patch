@@ -1,0 +1,43 @@
+diff --git a/tests/semantic/test_salu_b32_lane_masks.py b/tests/semantic/test_salu_b32_lane_masks.py
+index 4621ff6..245aad5 100644
+--- a/tests/semantic/test_salu_b32_lane_masks.py
++++ b/tests/semantic/test_salu_b32_lane_masks.py
+@@ -220,6 +220,25 @@ class Wave64HalfMaskBitwiseTests(unittest.TestCase):
+                                      [word >> (i // 2) & 1 for i in range(64)])
+                     self.assertEqual([mem[256 + 4 * i] for i in range(64)], [int(compare == 0)] * 64)
+ 
++    def test_bitreplicate_replaces_wave64_exec_and_preserves_scc(self):
++        asm = [
++            "s_mov_b64 exec, 0",
++            "s_cmp_eq_u32 s5, 0",
++            "s_bitreplicate_b64_b32 exec, s4",
++            "s_cselect_b32 s6, 1, 2",
++            "v_mov_b32 v5, s6",
++            "v_lshlrev_b32 v6, 2, v0",
++            "buffer_store_dword v5, v6, s[0:3], 0 offen",
++            "s_endpgm",
++        ]
++        spv = translate_cs("w64_bitreplicate_exec", asm, 64)
++        for word in (0, 0x80000001, 0x0F0F0F0F, M32):
++            for compare in (0, 1):
++                with self.subTest(word=word, compare=compare):
++                    mem = run_cs(spv, 64, s4=word, s5=compare)
++                    self.assertEqual([mem.get(4 * i, 0) for i in range(64)],
++                                     [(1 + compare) * (word >> (i // 2) & 1) for i in range(64)])
++
+     def test_exec_lo_and_exec_hi_preserve_other_half_and_vote_own_half_scc(self):
+         # Test s_not_b32 and all 8 binary ops writing exec_lo or exec_hi.
+         ops = ["s_not_b32"] + list(BIN_REFS.keys())
+diff --git a/tools/rdna2spirv.py b/tools/rdna2spirv.py
+index 032f5c9..9d98bf3 100644
+--- a/tools/rdna2spirv.py
++++ b/tools/rdna2spirv.py
+@@ -6925,7 +6925,7 @@ class Gen:
+             if self.is_mask_op(x):
+                 raise Unsupported(op + " on a lane mask")
+             if d["k"] == "special" and d.get("t", "").startswith(("exec", "vcc")):
+-                if op != "s_bitreplicate_b64_b32" or d["t"] != "vcc" or self.stage != "cs" or not self.wave64:
++                if op != "s_bitreplicate_b64_b32" or d["t"] not in ("exec", "vcc") or self.stage != "cs" or not self.wave64:
+                     raise Unsupported(op + " on a lane mask")
+                 shift, shifted, bit, mask = (self.tmp() for _ in range(4))
+                 lane = self.wave_lane()
