@@ -1951,3 +1951,39 @@ different field split — one assembled instruction per candidate opcode (`s_buffe
 |---|---|
 | FSPX | 23 / 29 |
 | open | 2 (literal), 4 (this class; the register-file explanation is now the weaker one) |
+
+---
+
+## 58. Skipping the fatal helper: the game keeps presenting, and the driver reports NVVM failures
+
+The trap cannot be reached with a breakpoint — the image is mapped by the loader, so cdb's software breakpoint on
+`game+0x2215c35` is written before the page exists. Instead the two fatal bytes were patched out of a **copy** of
+the executable (`D:\Kestrel-out\diag\app_diag.exe`, `mov dword [0],0` and the `int3` after it replaced with
+`nop`s) and the copy was run. The original in `D:\Ref-Package` is untouched.
+
+Result: the process no longer dies. It presented **8192 frames in three minutes**, with the window alive the whole
+time (`Americas`, 1940x1100), and the error log shows real work being done — pipeline creation, descriptor copies,
+FSR pipelines that now build.
+
+The frame is still black, and a new line appears in the log:
+
+```
+NVVM compilation failed: 3
+NVVM compilation failed: 3
+```
+
+`NVVM` is the NVIDIA driver's shader compiler, so these are pipelines the Vulkan driver refused — a different
+failure from anything the layer logged, and the first driver-side refusal seen in this whole investigation. That
+is the next lead: find which shaders they are (the driver's own message carries no SPIR-V hash) and why.
+
+Also worth noting: at t+180 s the window measured 160x28 in a capture, i.e. it changed size at some point during
+the run. Whether the title resizes its window when it changes state is not established.
+
+## Where this leaves the loading screen
+
+The trap was the thing that ended the run; with it patched out the title keeps running and keeps presenting. The
+black frame is now the only thing between the process and a visible loading screen, and it has two independent
+causes on record: the title's own shaders (probe paints green through the same path) and now driver-side NVVM
+refusals.
+
+The patch is diagnostic, not a fix: it removes the title's error path rather than answering it.
