@@ -1053,3 +1053,34 @@ a hand-made slice: the first attempt here read header bytes as code because the 
 
 `LEONIDA_DISASM_DEBUG=1` now prints both the recovered VOP3P words and the offsets left invalid, which
 is what produced these numbers; it is off unless the variable is set.
+
+---
+
+## 35. The word is located exactly: offset 0x62f0, bytes `56 36 42 1a`
+
+The framing is now pinned instead of guessed. For `_06` the container is 42616 bytes and the listing is
+built from the header range, slice `[0x24, 0xa178)` — 41300 bytes — so the invalid offset the debug
+counter prints is relative to that slice:
+
+```
+slice[0x62f0:0x62f8] = 56 36 42 1a | 47 03 d6 be
+prev 8 bytes        = 4a 03 d7 be | 3e 26 42 1a
+next 8 bytes        = 56 34 0a 1a | 4b 03 d6 be
+```
+
+The word is `0x1a423656`, and its neighbourhood is the same shape: `...42 1a` four bytes apart in three
+consecutive instructions (`0x1a42363e`, `0x1a423656`) with `be d6/d7 03 ...` words between them. That
+pattern — a small family of words sharing the top two bytes, interleaved with `0xbe...` words — is what
+a VOP2-class instruction next to a literal, or a VOP3 pair, looks like; it is not the VOP3P `0xcc...`
+family that the first two classes belonged to.
+
+The earlier reading in section 34 quoted the wrong four bytes: llvm-mc's message window prints a
+32-byte context and the caret column does not map to a byte by simple division when the line wraps. The
+bytes above come from the slice itself, at the offset the tool reports, which is the only reading that
+does not depend on the message formatting.
+
+## Next
+
+Decode `0x1a423656` with the top bits `0x06` as a primary opcode: identify the format, prove the
+mnemonic by assembling candidates and comparing eight bytes, then add its class to the disassembler the
+same way `op_sel` was added. Four programs turn on it, so one class closes 4 of the remaining 8.
