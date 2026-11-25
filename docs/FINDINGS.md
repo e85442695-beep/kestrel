@@ -2188,3 +2188,54 @@ window into it — a change to the layer's memory model, not a switch.
 | memory | 20 GB peak on a 16 GB machine: this is the wall |
 | frame | still only a clear |
 | recorded | sections 59-64, patches for each change |
+
+---
+
+## 65. Section-backed heaps: resident memory down to 6-7 GB, and the run now ends by quitting, not crashing
+
+`LEONIDA_LAZY_COMMIT_MB` now backs a large request with a **pagefile-backed section** (`CreateFileMappingW` on
+`INVALID_HANDLE_VALUE` + `MapViewOfFile`) instead of a private commit. The pages are real and readable the
+moment the call returns, cost no RAM until touched, and Windows can page them out.
+
+| | before | after |
+|---|---|---|
+| resident (working set) | 18-20 GB | **3.9-8.8 GB** |
+| private | 20 GB | 15.6 GB |
+| run length | ~140 s | ~160 s |
+| exit | crashed on an allocation | **exit code 0 — the title quits itself** |
+
+`exit 0` is new and important: the title is no longer being killed by memory or by a fault in the layer, it
+runs its own shutdown at about 160 s.
+
+## What the trace shows
+
+Two first-chance exceptions in the layer itself, both reading the title's memory:
+
+```
+{"kind":"exception","code":"0xc0000005","at":"host:gta6rt-fix.exe+0x65239","access":"read","address":"0x23540b40000"}
+{"kind":"exception","code":"0xc0000005","at":"host:gta6rt-fix.exe+0x65239","access":"read","address":"0x23540740000"}
+```
+
+and one in the title at t=103 s:
+
+```
+{"kind":"exception","code":"0xc0000005","at":"app_diag2.exe+0x13360a3","access":"read","address":"0xffffffffffffffff"}
+```
+
+So the layer faults copying from a title address that is not readable, and the title later reads through a
+pointer of `-1`. Both are the same class as the null dereference in section 63: the title's memory layout is
+being described to the layer wrong.
+
+## The fatal helper now returns instead of trapping
+
+A second diagnostic image (`app_diag2.exe`) patches `mov dword [0],0; int3` to `xor eax,eax; ret`, so the
+helper returns the way a failing check would. The title then continues to about 160 s and exits cleanly
+instead of dying at the point of the trap. That is the right shape for a diagnostic image and supersedes the
+earlier `nop` patch, which fell through into the next function's garbage.
+
+## Next
+
+1. symbolise `gta6rt-fix.exe+0x65239` and see which copy faults on `0x23540b40000` — the address is inside the
+   title's range, so either the range is shorter than the alias table says or the page is outside the section;
+2. find what makes the title quit at 160 s: with a clean exit, the reason is a returned error, not a crash, so
+   the shim that returned it can be found by counting non-S_OK results before the exit.
