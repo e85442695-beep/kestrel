@@ -2014,3 +2014,56 @@ In a standalone experiment, disabling Vulkan compute pipeline optimization
 allowed three of four previously failing modules to compile. Two took several
 minutes and one still failed with VK_ERROR_UNKNOWN. The optimization override
 was kept in the isolated diagnostic checkout.
+
+---
+
+## 59. The process death was the driver's compiler running out of memory — fixed by serialising one compile
+
+The end of a run was never the title's fatal helper alone. The log's last lines were:
+
+```
+NVVM compilation failed: 3
+LLVM ERROR: out of memory
+Buffer allocation failed
+```
+
+`NVVM` is the NVIDIA driver's shader compiler: it exhausted memory while building pipelines and aborted the
+process. The runtime already knew this failure mode — `LargeCompileSlots` admits two large modules at once
+and its own comment records ten at once doing the same — but two was still too many here.
+
+`LEONIDA_LARGE_COMPILE_SLOTS` now defaults to **1**, with the variable able to raise it:
+
+```cpp
+free_.wait(lock, [this] { return used_ < slots(); });   // slots() reads LEONIDA_LARGE_COMPILE_SLOTS, default 1
+```
+
+Measured effect, same diagnostic image, three minutes:
+
+| | before | after |
+|---|---|---|
+| driver OOM / NVVM failures | two per run, process aborted | **none** |
+| presents before the end | 8192, then death | **16384 and still alive** |
+| indexed draws | none | `draw #1 indexed: indices=30`, `#3 indices=60` |
+
+## 60. Two more knobs the runtime named itself
+
+```
+[rt] d3d12: GPU address arena full (raise LEONIDA_ARENA_MB): title memory left untranslated
+```
+
+`LEONIDA_ARENA_MB=8192` removes that line entirely. The other new event is real texture traffic — the title
+now issues `CopyTextureRegionX` (list slot 85), which it never did in earlier runs.
+
+## 61. The frame is still only a clear
+
+`LEONIDA_DEBUG_CLEAR=1` on the long run gives **uniform magenta** at 16,384 presents: the title's draws reach
+the render targets, but nothing they compute lands on the presented image. That is the same picture as
+before this round — the improvement is that the run now lasts long enough to observe it.
+
+## State
+
+| | |
+|---|---|
+| run stability | fixed: no driver OOM, 16k+ presents |
+| frame | clear only (magenta with the debug clear) |
+| next | with the run stable, re-test `LEONIDA_PROBE=all` on this build: if the probe still paints green, the gap is the title's shaders; if not, the pipeline path changed |
