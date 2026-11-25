@@ -1,0 +1,128 @@
+diff --git a/runtime/shims/d3d12_vulkan_device.cpp b/runtime/shims/d3d12_vulkan_device.cpp
+index c4ddaff..0e74185 100644
+--- a/runtime/shims/d3d12_vulkan_device.cpp
++++ b/runtime/shims/d3d12_vulkan_device.cpp
+@@ -6760,6 +6779,8 @@ public:
+                 std::lock_guard lock(state_.context->submit_mutex());
+                 state_.context->vk.vkDeviceWaitIdle(state_.info.device);
+             }
++            for (const auto& [address, texture] : xmem_srv_textures_) texture->Release();
++            xmem_srv_textures_.clear();
+             state_.context->drain_deleted_resources(UINT64_MAX);
+             state_.context->set_bindless_release(nullptr, nullptr);
+             state_.context->set_bindless_current(nullptr);  // the retired generations go with state_.bindless below
+@@ -6824,6 +6845,52 @@ public:
+         return texture->second;
+     }
+ 
++    ID3D12Resource* add_ref_texture_for_srv(std::uint64_t address, const D3D12_RESOURCE_DESC& shape) {
++        if (ID3D12Resource* existing = add_ref_texture_at(address)) return existing;
++        if (shape.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || shape.Format != DXGI_FORMAT_R8_UNORM ||
++            shape.DepthOrArraySize != 1 || shape.MipLevels != 1 || shape.SampleDesc.Count != 1 ||
++            shape.SampleDesc.Quality || !shape.Width || !shape.Height ||
++            shape.Width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || shape.Height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION)
++            return nullptr;
++
++        const std::uint64_t bytes = shape.Width * shape.Height;
++        std::uint64_t lo = 0, hi = 0;
++        if (!leonida::title_va_aliases().title_memory(address, lo, hi) || bytes > hi - address) return nullptr;
++
++        const std::lock_guard lock(xmem_srv_texture_mutex_);
++        if (const auto it = xmem_srv_textures_.find(address); it != xmem_srv_textures_.end()) {
++            Resource* texture = it->second;
++            if (texture->desc().Width != shape.Width || texture->desc().Height != shape.Height) return nullptr;
++            texture->AddRef();
++            return texture;
++        }
++
++        constexpr std::uint64_t texture_budget = 16ull << 20;
++        if (bytes > texture_budget - xmem_srv_texture_bytes_) return nullptr;
++
++        D3D12_RESOURCE_DESC desc = shape;
++        desc.Alignment = 0;
++        desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
++        desc.Flags = D3D12_RESOURCE_FLAG_NONE;
++        const D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_CUSTOM, D3D12_CPU_PAGE_PROPERTY_WRITE_BACK,
++                                         D3D12_MEMORY_POOL_L0, 1, 1};
++        const Format format = state_.texture_format(desc);
++        if (format.format == VK_FORMAT_UNDEFINED) return nullptr;
++
++        // This internal image is owned by the device, so it doesn't take a COM reference back to it.
++        auto release = [](Resource* image) { image->Release(); };
++        std::unique_ptr<Resource, decltype(release)> texture(new Resource(state_, desc, heap, D3D12_HEAP_FLAG_NONE),
++                                                            release);
++        if (FAILED(texture->create_texture(format)) ||
++            !texture->attach_texture_pages(reinterpret_cast<void*>(static_cast<std::uintptr_t>(address)))) return nullptr;
++        xmem_srv_textures_.emplace(address, texture.get());
++        xmem_srv_texture_bytes_ += bytes;
++        texture->AddRef();
++        std::fprintf(stderr, "[rt] d3d12: slot 70 created an %llux%u R8_UNORM SRV texture over XMem\n",
++                     static_cast<unsigned long long>(desc.Width), desc.Height);
++        return texture.release();
++    }
++
+     UINT STDMETHODCALLTYPE GetNodeCount() override { return 1; }
+ 
+     // The Vulkan physical device's LUID, which is the DXGI adapter's on Windows. Zero (logged) when the driver has
+@@ -10161,6 +10228,9 @@ private:
+     std::vector<std::uint32_t> compute_users_;
+     std::vector<std::uint32_t> copy_users_;
+     DeviceState state_;
++    std::mutex xmem_srv_texture_mutex_;
++    std::map<std::uint64_t, Resource*> xmem_srv_textures_;
++    std::uint64_t xmem_srv_texture_bytes_ = 0;
+     std::atomic<bool> removed_{false};
+     OwnedRuntime owned_;
+     IUnknown* outer_ = nullptr;  // the Xbox-ABI proxy, which owns a reference to this device
+@@ -10205,9 +10275,9 @@ void set_device_outer(ID3D12Device* device, IUnknown* outer) {
+                       std::uint64_t* size) -> ID3D12Resource* {
+                 Device* device = Device::from<Device>(real);
+                 return device ? device->add_ref_buffer_at(va, bytes, *start, *size) : nullptr;
+-            }, [](ID3D12Device* real, std::uint64_t va) -> ID3D12Resource* {
++            }, [](ID3D12Device* real, std::uint64_t va, const D3D12_RESOURCE_DESC& shape) -> ID3D12Resource* {
+                 Device* device = Device::from<Device>(real);
+-                return device ? device->add_ref_texture_at(va) : nullptr;
++                return device ? device->add_ref_texture_for_srv(va, shape) : nullptr;
+             }, [](ID3D12Device* real, std::uint64_t va, std::uint64_t width, const D3D12_SHADER_RESOURCE_VIEW_DESC& view,
+                   D3D12_CPU_DESCRIPTOR_HANDLE dest) {
+                 Device* device = Device::from<Device>(real);
+diff --git a/runtime/shims/d3d12_xs_device.cpp b/runtime/shims/d3d12_xs_device.cpp
+index bd753c6..6d07013 100644
+--- a/runtime/shims/d3d12_xs_device.cpp
++++ b/runtime/shims/d3d12_xs_device.cpp
+@@ -2761,7 +2761,7 @@ bool write_texture_srv(DeviceProxy* self, std::uint64_t words, std::uint64_t des
+     if (view.ViewDimension < D3D12_SRV_DIMENSION_TEXTURE1D || view.ViewDimension > D3D12_SRV_DIMENSION_TEXTURECUBEARRAY)
+         return false;
+     std::memcpy(&address, reinterpret_cast<const void*>(description + sizeof(view)), sizeof(address));
+-    ID3D12Resource* texture = address ? self->texture_provider(self->real, address) : nullptr;
++    ID3D12Resource* texture = address ? self->texture_provider(self->real, address, shape) : nullptr;
+     if (!texture) return false;
+ 
+     view.Format = pc_format(view.Format, false);
+diff --git a/runtime/shims/d3d12_xs_device.h b/runtime/shims/d3d12_xs_device.h
+index 7ee82c9..e1230a4 100644
+--- a/runtime/shims/d3d12_xs_device.h
++++ b/runtime/shims/d3d12_xs_device.h
+@@ -133,7 +133,8 @@ using ResourceByVaProvider = ID3D12Resource* (*)(ID3D12Device* real, std::uint64
+                                                 std::uint64_t* start, std::uint64_t* size);
+ // `device` is the proxy or its DXGI pointer. False, with a line on stderr, when it is neither. Without a provider slot
+ // 70 writes only the null view.
+-using TextureByVaProvider = ID3D12Resource* (*)(ID3D12Device* real, std::uint64_t va);
++using TextureByVaProvider = ID3D12Resource* (*)(ID3D12Device* real, std::uint64_t va,
++                                                 const D3D12_RESOURCE_DESC& shape);
+ using TitleBufferSrvWriter = bool (*)(ID3D12Device* real, std::uint64_t va, std::uint64_t width,
+                                       const D3D12_SHADER_RESOURCE_VIEW_DESC& view, D3D12_CPU_DESCRIPTOR_HANDLE dest);
+ bool set_device_resource_provider(void* device, ResourceByVaProvider provider, TextureByVaProvider texture = nullptr,
+diff --git a/runtime/test/xs_proxy_mock_test.cpp b/runtime/test/xs_proxy_mock_test.cpp
+index c733a12..4231a49 100644
+--- a/runtime/test/xs_proxy_mock_test.cpp
++++ b/runtime/test/xs_proxy_mock_test.cpp
+@@ -2087,7 +2087,7 @@ int check_slot70_raw_buffer() {
+ 
+     g_buffer->resource_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+     g_buffer->resource_desc.Format = DXGI_FORMAT_R32G8X24_TYPELESS;
+-    EXPECT(xs::set_device_resource_provider(device, &find_buffer, [](ID3D12Device*, std::uint64_t va)
++    EXPECT(xs::set_device_resource_provider(device, &find_buffer, [](ID3D12Device*, std::uint64_t va, const D3D12_RESOURCE_DESC&)
+         -> ID3D12Resource* {
+         if (va != kBufferStart) return nullptr;
+         ++g_buffer->refs;

@@ -1987,3 +1987,30 @@ causes on record: the title's own shaders (probe paints green through the same p
 refusals.
 
 The patch is diagnostic, not a fix: it removes the title's error path rather than answering it.
+
+
+---
+
+## Slot 70 R8_UNORM texture view from XMem
+
+The startup path supplies a 256x128 R8_UNORM Texture2D directly from XMem.
+The Vulkan device now backs the view with an internal texture, using the
+existing upload path for linear title pages. The fallback checks the bounds
+of the title allocation and keeps the internal image alive for its descriptors.
+Apply `patches/menu-stack-xmem-r8-srv.patch` after the slot 70 texture and
+R16_UINT patches.
+
+The MSVC runtime build and focused slot 70 mock test passed. The diagnostic
+retail run on the GTX 1650 created the texture and wrote its SRV. Direct Vulkan
+swapchain readback at sampled frames through frame 4096 measured zero nonblack
+RGB pixels out of 1,068,000. The loading screen and menu are still absent.
+The vertex and pixel shaders on the first draws into both presented images
+passed the SPIR-V interface check. Their title-written V# descriptors include
+addresses outside the CPU-mapped arena, with real constant data available
+through the reverse title VA mapping. The readback does not identify which
+of those GPU addresses produced incorrect shader values.
+
+In a standalone experiment, disabling Vulkan compute pipeline optimization
+allowed three of four previously failing modules to compile. Two took several
+minutes and one still failed with VK_ERROR_UNKNOWN. The optimization override
+was kept in the isolated diagnostic checkout.
