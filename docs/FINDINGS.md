@@ -2279,3 +2279,37 @@ The memory work is done and measured; the next question is which object carries 
 have constructed it. The call site takes `rsi` as `this` and `r15` as an argument, so a breakpoint there with
 `rsi` and a stack walk is the next measurement — and a breakpoint on that address works only after the image is
 mapped, which is why the diagnostic copy (patched helper) is the image to use.
+
+---
+
+## 67. Under the debugger the failure moves: a jump to address 1
+
+Catching the fault from outside (cdb, `sxe` on access violations, continuing every fault whose RIP is below the
+game image) never reached `game+0x13360a3`. Instead the process took a **second-chance** access violation with
+RIP = `0x1`:
+
+```
+(6dc8.1c60): Access violation - code c0000005 (!!! second chance !!!)
+00000000`00000001 ??              ???
+```
+
+So under a debugger the title's failure is a call through a garbage pointer to address 1 — the same family as
+the vtable of -1 seen in the trace, with a different value. That is consistent with an object whose vtable
+pointer was never written (it holds whatever the allocator left), not with one specific corrupt object.
+
+Two practical notes for the next session:
+
+- `sxe -c "... .if ..."` does not run the condition the way a breakpoint command does; the fault has to be
+  filtered inside a breakpoint or by symbol, not by a conditional on `sxe`.
+- software breakpoints on the game image do not exist until the loader has mapped it, so a breakpoint there must
+  be planted from the runtime or after the first game instruction runs.
+
+## Where the whole investigation stands
+
+| | |
+|---|---|
+| run stability | driver OOM fixed, 16k+ presents |
+| memory | resident 3.9-8.8 GB (was 18-20), the large heaps are pagefile-backed sections |
+| end of run | ~160 s, exit code 0, after a call through a garbage vtable |
+| frame | still only a clear |
+| corpus | FSPX 23/29, no missing programs requested by the runtime |
