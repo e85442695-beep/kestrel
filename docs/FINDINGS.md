@@ -2239,3 +2239,43 @@ earlier `nop` patch, which fell through into the next function's garbage.
    title's range, so either the range is shorter than the alias table says or the page is outside the section;
 2. find what makes the title quit at 160 s: with a clean exit, the reason is a returned error, not a crash, so
    the shim that returned it can be found by counting non-S_OK results before the exit.
+
+---
+
+## 66. The title's last fault is a vtable of -1, at a known instruction
+
+```
+{"kind":"exception","code":"0xc0000005","at":"app_diag2.exe+0x13360a3","access":"read","address":"0xffffffffffffffff"}
+```
+
+Disassembly at `game+0x133609a`:
+
+```
+14133609a  mov    (%rsi),%rax          ; rax = the object's vtable pointer
+14133609d  mov    %rsi,%rcx            ; this
+1413360a0  mov    %r15,%rdx
+1413360a3  call   *0xb0(%rax)          ; <-- the fault: rax is -1
+1413360a9  jmp    0x141335c5e
+```
+
+So the title calls a virtual method at vtable offset `0xb0` on an object whose vtable pointer is
+`0xFFFFFFFFFFFFFFFF`. That is the same signature as the very first finding in this investigation (a vtable read
+as -1) and it happens before the clean exit at ~160 s: the title builds or receives an object it never
+constructed, calls into it, faults, and shuts down.
+
+The two first-chance faults in our own runtime (`gta6rt-fix.exe+0x65239`, reading `0x23540b40000`) are *not*
+the cause: that instruction sits inside `copy_title_pages`'s guarded copy, whose `__except` catches exactly this,
+and the page is then zero-filled by design (section 2.x of the window code).
+
+## Where that leaves the rewrite
+
+| | |
+|---|---|
+| resident memory | 3.9-8.8 GB (was 18-20 GB) |
+| run | ~160 s, exit code 0 |
+| blocker | an object with vtable -1, called at `game+0x13360a3` |
+
+The memory work is done and measured; the next question is which object carries a -1 vtable, and what should
+have constructed it. The call site takes `rsi` as `this` and `r15` as an argument, so a breakpoint there with
+`rsi` and a stack walk is the next measurement — and a breakpoint on that address works only after the image is
+mapped, which is why the diagnostic copy (patched helper) is the image to use.
