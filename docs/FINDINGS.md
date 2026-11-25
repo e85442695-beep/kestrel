@@ -2148,3 +2148,43 @@ something the title depends on beyond "the memory is there". The candidates, non
 
 The run is now bounded by a null dereference at ~60 s with 5.7 GB instead of by memory at ~140 s with 20 GB.
 Both are recorded; neither reaches a frame with content, and the frame is still only a clear.
+
+---
+
+## 64. Reserving through the normal path is worse, not better
+
+Sections 63 left the lazy path reserving with plain 64 KiB pages, which ignores the page mode the requests name
+(`0x20003000` = 2 MiB large pages, `0x20402000` = 64 KiB pages). The next attempt reserved through
+`xmem_virtual_alloc` with `MEM_COMMIT` cleared — so the mode and the alignment are honoured — and committed on
+touch with the matching granularity (2 MiB / 64 KiB / 4 MiB).
+
+Measured: **one lazy range, then death at 20 s**, sooner than either earlier variant. Reserving without
+committing is evidently not something the title tolerates: the request's page mode is not just an alignment hint,
+it is part of what the title believes it owns.
+
+## The three variants, side by side
+
+| variant | peak private | end |
+|---|---|---|
+| lazy off | 20.0 GB | ~140 s, allocation failure |
+| lazy, plain 64 KiB reserve | 5.7 GB | ~60 s, null dereference at `game+0x9dfd93` |
+| lazy, reserve through the normal path | — | **20 s**, one range, dies immediately |
+
+So the memory win was real but each way of getting it changes what the title observes. The code stays behind
+`LEONIDA_LAZY_COMMIT_MB` (off by default), so a normal run behaves exactly as before.
+
+## What the evidence points at
+
+The title allocates multi-gigabyte heaps with explicit page modes and treats them as GPU memory it owns. Backing
+them with ordinary host pages, committed or on demand, is not the same object. Doing this properly means backing
+those heaps with Vulkan device memory (or a file mapping that the device imports) and giving the CPU a mapped
+window into it — a change to the layer's memory model, not a switch.
+
+## Where the goal stands tonight
+
+| | |
+|---|---|
+| run stability | driver OOM fixed (section 59), 16k+ presents |
+| memory | 20 GB peak on a 16 GB machine: this is the wall |
+| frame | still only a clear |
+| recorded | sections 59-64, patches for each change |
