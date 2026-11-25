@@ -2110,3 +2110,41 @@ a number rather than a guess.
    with a running total, and the Vulkan memory the device reports),
 2. cap what can be capped: texture shadowing is already off, the pipeline cache could be dropped for a run,
 3. only then return to the compositing question.
+
+---
+
+## 63. Lazy commit: 17 GB to 5.7 GB, and a null dereference it exposes
+
+`LEONIDA_LAZY_COMMIT_MB` (off by default) reserves an `XMemVirtualAlloc` request of that many megabytes or
+more instead of committing it, and a vectored exception handler commits one 64 KiB chunk the first time the
+title touches it. `XMemVirtualQuery` reports such a range as committed and wholly present, because the title
+asks and gives up when the answer is no.
+
+Measured, same diagnostic image:
+
+| configuration | peak private | how it ended |
+|---|---|---|
+| lazy off, `ARENA_MB=2048` | **20.0 GB** | died at ~140 s on an allocation |
+| `LAZY_COMMIT_MB=256` | **5.7 GB** | died at ~60 s on a null dereference |
+| `LAZY_COMMIT_MB=1024` (two ranges only) | 6.8 GB | same null dereference |
+
+So the memory model change works — three to four times less memory for the same progress — and the title now
+fails differently: `mov (%r8),%rcx` at `game+0x9dfd93` with `r8 = 0`, i.e. a pointer the title assembled
+earlier was null. Registering the reserved range with `title_va_aliases` (which the normal path does and the
+early return skipped) did not change it.
+
+That the control run with the same binary and lazy off does **not** crash there means the lazy range changes
+something the title depends on beyond "the memory is there". The candidates, none tested yet:
+
+- the request carries page-mode flags (`0x20003000`, `0x20402000`) that the normal path honours — 2 MiB or
+  4 MiB large pages, physical/large-page bits — and the title derives an address or alignment from that;
+- `XMemVirtualQuery`'s answer for a range that is only reserved is used for more than a yes/no, and the
+  fabricated `MEM_COMMIT` at the requested base is not what the title computed against;
+- the title maps the returned address into a GPU VA and then reads a pointer back out of it before anything
+  has been committed there; our handler commits on the CPU fault, but a value it expected to be non-zero
+  stays zero.
+
+## Where the goal stands
+
+The run is now bounded by a null dereference at ~60 s with 5.7 GB instead of by memory at ~140 s with 20 GB.
+Both are recorded; neither reaches a frame with content, and the frame is still only a clear.
