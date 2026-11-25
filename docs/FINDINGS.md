@@ -2067,3 +2067,46 @@ before this round — the improvement is that the run now lasts long enough to obs
 | run stability | fixed: no driver OOM, 16k+ presents |
 | frame | clear only (magenta with the debug clear) |
 | next | with the run stable, re-test `LEONIDA_PROBE=all` on this build: if the probe still paints green, the gap is the title's shaders; if not, the pipeline path changed |
+
+---
+
+## 62. The machine, measured — and why the peak memory matters
+
+```
+total RAM: 15.9 GB      free: 9.1 GB
+GPU:       NVIDIA GeForce GTX 1650, 4 GB
+mainboard: B450M-HDVR4.0
+```
+
+Peak private bytes of the process during a run, sampled every 15 s:
+
+| arena setting | peak private |
+|---|---|
+| `LEONIDA_ARENA_MB=8192` | 18.0 GB |
+| `LEONIDA_ARENA_MB=2048` | 20.0 GB |
+
+Lowering the arena does **not** lower the peak, so the arena is not what fills memory. On a 16 GB machine a
+20 GB peak means paging, and the run ends shortly after the peak in both cases. `LEONIDA_LARGE_COMPILE_SLOTS`
+is already 1.
+
+The title itself asks for 24 GB reservations (`XMemVirtualAlloc` with `attributes 0x21` and `0x3`, size
+25769803776) — the console's unified memory — and the runtime answers with real allocations. The shim does
+distinguish `MEM_RESERVE` from `MEM_COMMIT`, so those are not committed wholesale; the growth is elsewhere:
+the title's own committed heaps, the driver's image allocations falling back to host memory on a 4 GB card,
+and the 336 MB pipeline cache.
+
+## What this means for the goal
+
+The console has 16 GB of unified memory for the whole title; this machine has 16 GB of system RAM *and* 4 GB
+of VRAM, with the operating system and the debugger on top. A run reaching 20 GB will not complete here no
+matter how the shader side is fixed — the memory ceiling arrives first.
+
+That does not make the work useless: everything up to the ceiling is measured, and the ceiling itself is now
+a number rather than a guess.
+
+## Next, in order of value on this machine
+
+1. find what allocates the 14 GB beyond the arena (log every `XMemAlloc`/`XMemVirtualAlloc` above 256 MiB
+   with a running total, and the Vulkan memory the device reports),
+2. cap what can be capped: texture shadowing is already off, the pipeline cache could be dropped for a run,
+3. only then return to the compositing question.
